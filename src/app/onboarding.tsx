@@ -27,7 +27,8 @@ export default function Onboarding() {
   const [apps, setApps] = useState<PickedApp[]>(MOCK_APP_CATALOG.slice(0, 3));
   const [minutes, setMinutes] = useState('30');
   const [quest, setQuest] = useState('');
-  const [daily, setDaily] = useState(true);
+  const [repeat, setRepeat] = useState<'daily' | 'weekly' | 'once'>('daily');
+  const [perWeek, setPerWeek] = useState(3);
   const [coins, setCoins] = useState(10);
   const [saving, setSaving] = useState(false);
 
@@ -46,7 +47,12 @@ export default function Onboarding() {
           taskType: 'main',
           rewardCoins: coins,
           dueAt: today,
-          recurrence: daily ? { frequency: 'day', interval: 1, anchorPolicy: 'completion' } : undefined,
+          recurrence:
+            repeat === 'daily'
+              ? { frequency: 'day', interval: 1, anchorPolicy: 'completion' }
+              : repeat === 'weekly'
+                ? { frequency: 'week', interval: 1, anchorPolicy: 'calendar', timesPerPeriod: perWeek }
+                : undefined,
         }),
       );
       if (!res.ok) {
@@ -120,9 +126,20 @@ export default function Onboarding() {
             <>
               <Field label="Your first quest" value={quest} onChangeText={setQuest} placeholder="e.g. Read for 20 minutes" />
               <Row style={{ flexWrap: 'wrap' }}>
-                <Chip label="Every day" selected={daily} onPress={() => setDaily(true)} />
-                <Chip label="Just once" selected={!daily} onPress={() => setDaily(false)} />
+                <Chip label="Every day" selected={repeat === 'daily'} onPress={() => setRepeat('daily')} />
+                <Chip label="Times a week" selected={repeat === 'weekly'} onPress={() => setRepeat('weekly')} />
+                <Chip label="Just once" selected={repeat === 'once'} onPress={() => setRepeat('once')} />
               </Row>
+              {repeat === 'weekly' && (
+                <>
+                  <Row style={{ flexWrap: 'wrap' }}>
+                    {[2, 3, 4, 5].map((n) => (
+                      <Chip key={n} label={`${n}× a week`} selected={perWeek === n} onPress={() => setPerWeek(n)} />
+                    ))}
+                  </Row>
+                  <T kind="small">E.g. gym {perWeek} times a week, on any days you like. Weeks run Monday to Sunday.</T>
+                </>
+              )}
               <T kind="small" color={p.ink}>
                 Reward
               </T>
