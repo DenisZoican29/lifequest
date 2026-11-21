@@ -14,7 +14,7 @@ import {
 } from '../src/domain/commands';
 import { coinBalance } from '../src/domain/economy';
 import { nextDueDate, periodContaining } from '../src/domain/recurrence';
-import { goalProgress, questsCompleted, questsDueToday, questsUpcoming, sideQuests } from '../src/domain/selectors';
+import { collapseQuota, goalProgress, questsCompleted, questsDueToday, questsUpcoming, sideQuests } from '../src/domain/selectors';
 import { world } from './helpers';
 
 describe('recurrence', () => {
@@ -256,5 +256,35 @@ describe('roadmap', () => {
     expect(() =>
       createTask(w.s, w.clock, { title: 'Oil', description: '', taskType: 'side', goalId: w.s.goals[0].id, rewardCoins: 0, dueAt: '2026-12-01' }),
     ).toThrow(/Side quests/);
+  });
+});
+
+describe('collapsing times-per-period rows', () => {
+  it('shows one row per quota quest, preferring the open one', () => {
+    const w = world();
+    w.run((s, c) =>
+      createTask(s, c, {
+        title: 'Glass of water',
+        description: '',
+        taskType: 'main',
+        rewardCoins: 1,
+        dueAt: c.today(),
+        recurrence: { frequency: 'day', interval: 1, anchorPolicy: 'calendar', timesPerPeriod: 3 },
+      }),
+    );
+    w.run((s, c) => createTask(s, c, { title: 'Call mum', description: '', taskType: 'main', rewardCoins: 5, dueAt: c.today() }));
+    const tick = () => w.run((s, c) => completeOccurrence(s, c, questsDueToday(s, c.today()).find((i) => i.quota)!.occurrence.id));
+    tick();
+    tick();
+    const today = w.clock.today();
+    const list = collapseQuota([...questsDueToday(w.s, today), ...questsCompleted(w.s, today)]);
+    expect(list.map((i) => [i.task.title, i.occurrence.status])).toEqual([
+      ['Call mum', 'open'],
+      ['Glass of water', 'open'],
+    ]);
+    tick();
+    const after = collapseQuota([...questsDueToday(w.s, today), ...questsCompleted(w.s, today)]);
+    expect(after.filter((i) => i.task.title === 'Glass of water')).toHaveLength(1);
+    expect(after.find((i) => i.task.title === 'Glass of water')!.occurrence.status).toBe('completed');
   });
 });

@@ -3,7 +3,7 @@ import { View } from 'react-native';
 
 import { setGoalStatus } from '@/domain/commands';
 import { daysBetween, formatFriendly } from '@/domain/dates';
-import { goalProgress, sortedMilestones, type QuestItem } from '@/domain/selectors';
+import { goalProgress, quotaProgress, sortedMilestones, type QuestItem } from '@/domain/selectors';
 import { useStore, useToday } from '@/state/store';
 import { Mascot } from '@/ui/art';
 import { Button, Card, EmptyState, IconButton, ProgressBar, Row, Screen, SectionLabel, StatusChip, T } from '@/ui/components';
@@ -39,7 +39,8 @@ export default function GoalDetail() {
       const o = s.occurrences.find((x) => x.taskDefinitionId === t.id && x.status === 'open');
       if (!o) return [];
       const dueInDays = daysBetween(today, o.scheduledFor);
-      return [{ occurrence: o, task: t, dueInDays, overdue: dueInDays < 0, reminderActive: false }];
+      const quota = quotaProgress(s, t, today);
+      return [{ occurrence: o, task: t, dueInDays, quota, overdue: dueInDays < 0 && !quota, reminderActive: false }];
     });
   const allDone = progress.total > 0 && progress.done === progress.total && goal.status === 'active';
 

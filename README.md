@@ -30,6 +30,7 @@ Data lives in each browser's IndexedDB, so the live site, localhost and your pho
 - **Repeat:** choose **Every day**, **Just once** or **Custom**. Custom asks *how many times* and *every how many days, weeks, months or years*, for example *3 times every 1 week*. The same picker is used in setup and in the quest form.
   - **1 time per period** works like a regular repeat. Choose whether the next one is due *after I complete it* or *on a fixed schedule*.
   - **2 or more times per period** makes a target. Weeks run Monday to Sunday and months start on the 1st. Every tick pays the reward. The quest comes back the next day until the target is met, then waits for the next period; for one-day periods it comes back the same day. Missed sessions are not carried over and it never shows as overdue. The row shows *1 of 3 this week*, or *2 to go · 1 day left* when you're behind (no warning in a partial first week). *Skip rest of this week* jumps to the next period.
+- **Logging multi-time quests:** quests with 2+ times per period show a counter badge (*1/3*) instead of a checkbox. **Swipe the row to the right** past about half its width to log +1; it says *Release to log* once you're far enough. Drag back or let go early to cancel, and a tap still opens the editor. Screen readers get a "Log one" action instead of the swipe. Repeated logs collapse into a single row in the lists.
 - **Archived:** archived quests are listed under **Archived (N)** at the bottom of the Quests tab. Open one and press **Restore quest** to make it due again today.
 
 ```bash

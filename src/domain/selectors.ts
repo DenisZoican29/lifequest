@@ -76,6 +76,21 @@ function join(s: Snapshot, filter: (o: TaskOccurrence) => boolean, today: LocalD
 const byDue = (a: QuestItem, b: QuestItem) =>
   a.occurrence.scheduledFor.localeCompare(b.occurrence.scheduledFor) || a.task.title.localeCompare(b.task.title);
 
+/**
+ * One row per times-per-period quest: its open occurrence if it's in the list, otherwise its
+ * latest completion. Without this, "8 glasses of water" would list every glass as its own row.
+ */
+export function collapseQuota(items: QuestItem[]): QuestItem[] {
+  const rank = (i: QuestItem) => (i.occurrence.status === 'open' ? '~' : (i.occurrence.completedAt ?? ''));
+  const best = new Map<string, QuestItem>();
+  for (const i of items) {
+    if (!i.quota) continue;
+    const prev = best.get(i.task.id);
+    if (!prev || rank(i) > rank(prev)) best.set(i.task.id, i);
+  }
+  return items.filter((i) => !i.quota || best.get(i.task.id) === i);
+}
+
 /** Open main-quest occurrences due today or overdue. */
 export function questsDueToday(s: Snapshot, today: LocalDate, type: TaskType = 'main'): QuestItem[] {
   return join(s, (o) => o.status === 'open', today)

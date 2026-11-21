@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { Pressable, View } from 'react-native';
 
 import { daysBetween } from '@/domain/dates';
-import { questsCompleted, questsDueToday, questsUpcoming, sideQuests, type QuestItem } from '@/domain/selectors';
+import { collapseQuota, questsCompleted, questsDueToday, questsUpcoming, sideQuests, type QuestItem } from '@/domain/selectors';
 import { useStore, useToday } from '@/state/store';
 import { Button, Card, EmptyState, Ionicons, ProgressBar, Screen, ScreenHeader, SectionLabel, Segmented, T } from '@/ui/components';
 import { QuestRow, SideQuestCard } from '@/ui/quest-row';
@@ -29,9 +29,9 @@ export default function Quests() {
   const ago = (i: QuestItem) => daysBetween(i.occurrence.completedOn ?? today, today);
 
   const completedMain = questsCompleted(s, today, 'main');
-  const daily = [...questsDueToday(s, today), ...completedMain.filter((i) => i.occurrence.completedOn === today)];
+  const daily = collapseQuota([...questsDueToday(s, today), ...completedMain.filter((i) => i.occurrence.completedOn === today)]);
   const upcoming = questsUpcoming(s, today);
-  const weekly = [...upcoming.filter((i) => i.dueInDays <= 7), ...completedMain.filter((i) => ago(i) > 0 && ago(i) < 7)];
+  const weekly = collapseQuota([...upcoming.filter((i) => i.dueInDays <= 7), ...completedMain.filter((i) => ago(i) > 0 && ago(i) < 7)]);
   const later = upcoming.filter((i) => i.dueInDays > 7);
   const sideOpen = sideQuests(s, today);
   const sideDone = questsCompleted(s, today, 'side').filter((i) => ago(i) <= 30);
@@ -73,10 +73,7 @@ export default function Quests() {
             <EmptyState mood="happy" title="No side quests yet" body="Add chores and upkeep, like cleaning the oven or changing the car oil. They never count toward your roadmap." />
           ) : (
             <View style={{ gap: space.md }}>
-              {sideOpen.map((item) => (
-                <SideQuestCard key={item.occurrence.id} item={item} today={today} />
-              ))}
-              {sideDone.slice(0, 5).map((item) => (
+              {collapseQuota([...sideOpen, ...sideDone.slice(0, 5)]).map((item) => (
                 <SideQuestCard key={item.occurrence.id} item={item} today={today} />
               ))}
             </View>

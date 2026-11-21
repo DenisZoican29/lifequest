@@ -10,6 +10,7 @@ import { useStore } from '@/state/store';
 import { Coin } from './art';
 import { Button, Ionicons, Row, StatusChip, T } from './components';
 import { nativeDriver, useReducedMotion } from './motion';
+import { SwipeToLog } from './swipe-to-log';
 import { font, radius, space, usePalette } from './theme';
 import { toast } from './toast';
 import { questContext, recurrenceWord, seeYouAgain } from './visuals';
@@ -84,6 +85,39 @@ function CheckCircle({ item }: { item: QuestItem }) {
   );
 }
 
+/** "1/3" badge for times-per-period quests; filled once the period's target is met. */
+function Counter({ done, times, active }: { done: number; times: number; active: boolean }) {
+  const p = usePalette();
+  const full = done >= times;
+  return (
+    <View style={styles.checkHit} accessible accessibilityLabel={`${done} of ${times} done`}>
+      <View style={[styles.counter, { backgroundColor: full ? p.forest : active ? p.mint : 'transparent', borderColor: full || active ? p.forest : p.faint }]}>
+        {full ? (
+          <Ionicons name="checkmark" size={18} color={p.onForest} />
+        ) : (
+          <T kind="small" color={active ? p.forest : p.muted} style={{ fontFamily: font.bold }}>
+            {done}/{times}
+          </T>
+        )}
+      </View>
+    </View>
+  );
+}
+
+/** "›› Swipe to log" hint under a quest you can log right now. */
+function SwipeHint() {
+  const p = usePalette();
+  return (
+    <Row gap={2}>
+      <Ionicons name="chevron-forward" size={12} color={p.faint} />
+      <Ionicons name="chevron-forward" size={12} color={p.faint} style={{ marginLeft: -8 }} />
+      <T kind="meta" color={p.faint}>
+        Swipe to log
+      </T>
+    </Row>
+  );
+}
+
 /** Task card: name, context, completion and coin value — nothing more (spec §07). */
 export function QuestRow({ item, today, showDue = true }: { item: QuestItem; today: string; showDue?: boolean }) {
   const p = usePalette();
@@ -91,44 +125,52 @@ export function QuestRow({ item, today, showDue = true }: { item: QuestItem; tod
   const { task, occurrence } = item;
   const open = occurrence.status === 'open';
   const due = occurrence.scheduledFor;
+  const quota = item.quota;
+  // Times-per-period quests are logged by swiping, and only once they're due (not tomorrow's).
+  const canLog = !!quota && open && item.dueInDays <= 0;
+  const nextOpen = quota && !open ? s.occurrences.find((o) => o.taskDefinitionId === task.id && o.status === 'open') : undefined;
 
   return (
-    <View style={[styles.row, { backgroundColor: p.surface, borderColor: p.border }]}>
-      <CheckCircle item={item} />
-      <Pressable
-        style={{ flex: 1, paddingVertical: space.md, gap: 3 }}
-        accessibilityRole="button"
-        accessibilityLabel={`Edit ${task.title}`}
-        onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })}>
-        <T kind="bodyStrong" color={open ? p.ink : p.muted} numberOfLines={2}>
-          {task.title}
-        </T>
-        <T kind="meta" numberOfLines={1}>
-          {questContext(s, task)}
-        </T>
-        {open && item.quota ? (
-          <Row gap={6} style={{ marginTop: 4, flexWrap: 'wrap' }}>
-            <StatusChip {...quotaChip(item.quota)} />
-            {showDue && item.dueInDays > 0 && <StatusChip tone="neutral" label={`Next ${formatFriendly(due, today)}`} />}
-          </Row>
-        ) : (
-          open &&
-          (item.overdue || (showDue && due !== today)) && (
-            <View style={{ marginTop: 4 }}>
-              <StatusChip tone={item.overdue ? 'overdue' : 'neutral'} label={item.overdue ? 'Overdue' : formatFriendly(due, today)} />
-            </View>
-          )
-        )}
-      </Pressable>
-      {task.rewardCoins > 0 && (
-        <Row gap={5} style={{ paddingRight: space.lg }}>
-          <Coin size={20} />
-          <T kind="small" color={p.goldInk} style={{ fontFamily: font.bold }}>
-            {task.rewardCoins}
+    <SwipeToLog enabled={canLog} onLog={() => void completeQuest(item)} label={`Log one ${task.title}`} borderRadius={radius.md + 2}>
+      <View style={[styles.row, { backgroundColor: p.surface, borderColor: p.border }]}>
+        {quota ? <Counter done={quota.done} times={quota.times} active={canLog} /> : <CheckCircle item={item} />}
+        <Pressable
+          style={{ flex: 1, paddingVertical: space.md, gap: 3 }}
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${task.title}`}
+          onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })}>
+          <T kind="bodyStrong" color={open ? p.ink : p.muted} numberOfLines={2}>
+            {task.title}
           </T>
-        </Row>
-      )}
-    </View>
+          <T kind="meta" numberOfLines={1}>
+            {questContext(s, task)}
+          </T>
+          {quota ? (
+            <Row gap={6} style={{ marginTop: 4, flexWrap: 'wrap' }}>
+              <StatusChip {...quotaChip(quota)} />
+              {open && item.dueInDays > 0 && <StatusChip tone="neutral" label={`Next ${formatFriendly(due, today)}`} />}
+              {nextOpen && quota.done < quota.times && <StatusChip tone="neutral" label={`Next ${formatFriendly(nextOpen.scheduledFor, today)}`} />}
+              {canLog && <SwipeHint />}
+            </Row>
+          ) : (
+            open &&
+            (item.overdue || (showDue && due !== today)) && (
+              <View style={{ marginTop: 4 }}>
+                <StatusChip tone={item.overdue ? 'overdue' : 'neutral'} label={item.overdue ? 'Overdue' : formatFriendly(due, today)} />
+              </View>
+            )
+          )}
+        </Pressable>
+        {task.rewardCoins > 0 && (
+          <Row gap={5} style={{ paddingRight: space.lg }}>
+            <Coin size={20} />
+            <T kind="small" color={p.goldInk} style={{ fontFamily: font.bold }}>
+              {task.rewardCoins}
+            </T>
+          </Row>
+        )}
+      </View>
+    </SwipeToLog>
   );
 }
 
@@ -151,48 +193,57 @@ export function SideQuestCard({ item, today }: { item: QuestItem; today: string 
         : { tone: 'demo' as const, label: 'Maintenance' };
   const when = done ? `Next due ${nextOpen ? formatFriendly(nextOpen.scheduledFor, today) : 'not scheduled'}` : `${recurrenceWord(task.recurrence)} · ${formatFriendly(occurrence.scheduledFor, today)}`;
 
+  const canLog = !!item.quota && !done && item.dueInDays <= 0;
   const snooze = async () => {
     const res = await useStore.getState().run((s, c) => snoozeOccurrence(s, c, occurrence.id, 3));
     toast(res.ok ? 'Snoozed for 3 days' : res.message, res.ok ? 'success' : 'error');
   };
 
   return (
-    <View style={[styles.side, { backgroundColor: p.surface, borderColor: p.border }]}>
-      <Row style={{ alignItems: 'flex-start' }}>
-        <Pressable
-          style={{ flex: 1, gap: 6 }}
-          accessibilityRole="button"
-          accessibilityLabel={`Edit ${task.title}`}
-          onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })}>
-          <StatusChip tone={chip.tone} label={chip.label} />
-          <T kind="h3">{task.title}</T>
-          <T kind="meta">{when}</T>
-        </Pressable>
-        {task.rewardCoins > 0 && (
-          <Row gap={5}>
-            <Coin size={22} />
-            <T kind="small" color={p.goldInk} style={{ fontFamily: font.bold }}>
-              {task.rewardCoins}
-            </T>
-          </Row>
-        )}
-      </Row>
-      {!done && (
-        <Row gap={space.sm} style={{ marginTop: space.sm }}>
-          <Button compact kind="secondary" title="Complete" icon="checkmark" onPress={() => void completeQuest(item)} style={{ flex: 1 }} accessibilityLabel={`Complete ${task.title}`} />
-          {item.overdue && <Button compact kind="tertiary" title="Snooze 3d" onPress={snooze} style={{ flex: 1 }} />}
-          {item.overdue && (
-            <Button compact kind="tertiary" title="Reschedule" onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })} style={{ flex: 1 }} />
+    <SwipeToLog enabled={canLog} onLog={() => void completeQuest(item)} label={`Log one ${task.title}`} borderRadius={radius.lg}>
+      <View style={[styles.side, { backgroundColor: p.surface, borderColor: p.border }]}>
+        <Row style={{ alignItems: 'flex-start' }}>
+          <Pressable
+            style={{ flex: 1, gap: 6 }}
+            accessibilityRole="button"
+            accessibilityLabel={`Edit ${task.title}`}
+            onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })}>
+            <StatusChip tone={chip.tone} label={chip.label} />
+            <T kind="h3">{task.title}</T>
+            <T kind="meta">{when}</T>
+          </Pressable>
+          {task.rewardCoins > 0 && (
+            <Row gap={5}>
+              <Coin size={22} />
+              <T kind="small" color={p.goldInk} style={{ fontFamily: font.bold }}>
+                {task.rewardCoins}
+              </T>
+            </Row>
           )}
         </Row>
-      )}
-    </View>
+        {canLog && (
+          <View style={{ marginTop: space.sm }}>
+            <SwipeHint />
+          </View>
+        )}
+        {!done && !item.quota && (
+          <Row gap={space.sm} style={{ marginTop: space.sm }}>
+            <Button compact kind="secondary" title="Complete" icon="checkmark" onPress={() => void completeQuest(item)} style={{ flex: 1 }} accessibilityLabel={`Complete ${task.title}`} />
+            {item.overdue && <Button compact kind="tertiary" title="Snooze 3d" onPress={snooze} style={{ flex: 1 }} />}
+            {item.overdue && (
+              <Button compact kind="tertiary" title="Reschedule" onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })} style={{ flex: 1 }} />
+            )}
+          </Row>
+        )}
+      </View>
+    </SwipeToLog>
   );
 }
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, borderRadius: radius.md + 2, minHeight: 68 },
   checkHit: { width: 56, alignSelf: 'stretch', alignItems: 'center', justifyContent: 'center' },
+  counter: { width: 40, height: 40, borderRadius: 20, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   check: { width: 26, height: 26, borderRadius: 13, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
   side: { borderWidth: 1, borderRadius: radius.lg, padding: space.lg + 2, gap: 2 },
 });
