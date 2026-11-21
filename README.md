@@ -27,7 +27,9 @@ Data lives in each browser's IndexedDB, so the live site, localhost and your pho
 
 - **Add:** use **+ Add quest** or **+ Add side quest** on the Quests tab, or **+ Quest** on a goal.
 - **Change status:** tap a quest to open it. The **Status** card offers *Mark done*, move to *Tomorrow / In 3 days / In 7 days*, *Skip this time* (repeating quests) and *Archive*.
-- **Several times per period:** choose **Repeat → X times per…**, e.g. *3 times per 1 week*. Weeks run Monday to Sunday, months start on the 1st. Every tick pays the reward. The quest comes back the next day until the target is met, then waits for the next period. For one-day periods, such as *8× a day*, it comes back the same day. Missed sessions are not carried over and the quest never shows as overdue. The row shows *1 of 3 this week*, or *2 to go · 1 day left* when you're behind. The behind warning is skipped in a partial first week. *Skip rest of this week* jumps to the next period.
+- **Repeat:** choose **Every day**, **Just once** or **Custom**. Custom asks *how many times* and *every how many days, weeks, months or years*, for example *3 times every 1 week*. The same picker is used in setup and in the quest form.
+  - **1 time per period** works like a regular repeat. Choose whether the next one is due *after I complete it* or *on a fixed schedule*.
+  - **2 or more times per period** makes a target. Weeks run Monday to Sunday and months start on the 1st. Every tick pays the reward. The quest comes back the next day until the target is met, then waits for the next period; for one-day periods it comes back the same day. Missed sessions are not carried over and it never shows as overdue. The row shows *1 of 3 this week*, or *2 to go · 1 day left* when you're behind (no warning in a partial first week). *Skip rest of this week* jumps to the next period.
 - **Archived:** archived quests are listed under **Archived (N)** at the bottom of the Quests tab. Open one and press **Restore quest** to make it due again today.
 
 ```bash

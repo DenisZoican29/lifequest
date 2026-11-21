@@ -14,26 +14,16 @@ import {
   type TaskInput,
 } from '@/domain/commands';
 import { formatFriendly } from '@/domain/dates';
-import type { AnchorPolicy, ChangeSet, RecurrenceFrequency, Snapshot, TaskType } from '@/domain/types';
+import type { ChangeSet, Snapshot, TaskType } from '@/domain/types';
 import type { Clock } from '@/domain/dates';
 import { quotaProgress } from '@/domain/selectors';
 import { useStore, useToday } from '@/state/store';
 import { Button, Card, Chip, ConfirmDialog, Field, Row, Screen, Segmented, StatusChip, T } from '@/ui/components';
 import { DateField } from '@/ui/date-field';
 import { quotaChip } from '@/ui/quest-row';
+import { RepeatPicker, repeatFromRule, ruleFromRepeat } from '@/ui/repeat-picker';
 import { font, space, usePalette } from '@/ui/theme';
 import { toast } from '@/ui/toast';
-
-type Repeat = 'none' | RecurrenceFrequency | 'times';
-const REPEATS: { value: Repeat; label: string }[] = [
-  { value: 'none', label: 'Once' },
-  { value: 'day', label: 'Daily' },
-  { value: 'week', label: 'Weekly' },
-  { value: 'month', label: 'Monthly' },
-  { value: 'year', label: 'Yearly' },
-  { value: 'times', label: 'X times per…' },
-];
-const PERIODS: RecurrenceFrequency[] = ['day', 'week', 'month', 'year'];
 
 export default function TaskForm() {
   const p = usePalette();
@@ -47,12 +37,7 @@ export default function TaskForm() {
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
   const [dueAt, setDueAt] = useState(existing ? nextDueOf(s, existing) : today);
-  const rule = existing?.recurrence;
-  const [repeat, setRepeat] = useState<Repeat>(rule?.timesPerPeriod ? 'times' : (rule?.frequency ?? 'none'));
-  const [quotaUnit, setQuotaUnit] = useState<RecurrenceFrequency>(rule?.timesPerPeriod ? rule.frequency : 'week');
-  const [times, setTimes] = useState(String(rule?.timesPerPeriod ?? 3));
-  const [interval, setInterval_] = useState(String(existing?.recurrence?.interval ?? 1));
-  const [anchor, setAnchor] = useState<AnchorPolicy>(existing?.recurrence?.anchorPolicy ?? 'completion');
+  const [repeat, setRepeat] = useState(() => repeatFromRule(existing?.recurrence));
   const [coins, setCoins] = useState(String(existing?.rewardCoins ?? 10));
   const [goalId, setGoalId] = useState<string | undefined>(existing?.goalId ?? params.goalId);
   const [reminder, setReminder] = useState<number | undefined>(existing?.reminderDaysBefore);
@@ -69,7 +54,6 @@ export default function TaskForm() {
 
   const goals = s.goals.filter((g) => g.status === 'active' || g.id === goalId);
   const isSide = taskType === 'side';
-  const unit = repeat === 'none' ? '' : repeat === 'times' ? quotaUnit : repeat;
   const quota = existing ? quotaProgress(s, existing, today) : undefined;
 
   const save = async () => {
@@ -81,12 +65,7 @@ export default function TaskForm() {
       goalId: isSide ? undefined : goalId,
       rewardCoins: coins.trim() === '' ? 0 : Number(coins),
       dueAt,
-      recurrence:
-        repeat === 'none'
-          ? undefined
-          : repeat === 'times'
-            ? { frequency: quotaUnit, interval: Number(interval), anchorPolicy: 'calendar', timesPerPeriod: Number(times) }
-            : { frequency: repeat, interval: Number(interval), anchorPolicy: anchor },
+      recurrence: ruleFromRepeat(repeat),
       reminderDaysBefore: isSide ? reminder : undefined,
     };
     setSaving(true);
@@ -209,66 +188,10 @@ export default function TaskForm() {
       <Field label="Title" value={title} onChangeText={setTitle} placeholder={isSide ? 'e.g. Clean the oven' : 'e.g. Study 30 minutes'} />
       <Field label="Description" value={description} onChangeText={setDescription} placeholder="Optional details" multiline />
 
-      <DateField label={existing ? 'Next due date' : repeat === 'times' ? 'Start date' : 'Due date'} value={dueAt} onChange={setDueAt} today={today} />
+      <DateField label={existing ? 'Next due date' : repeat.mode === 'custom' && repeat.times !== '1' ? 'Start date' : 'Due date'} value={dueAt} onChange={setDueAt} today={today} />
 
       <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>Repeat</T>
-      <Row style={{ flexWrap: 'wrap' }}>
-        {REPEATS.map((r) => (
-          <Chip key={r.value} label={r.label} selected={repeat === r.value} onPress={() => setRepeat(r.value)} />
-        ))}
-      </Row>
-      {repeat === 'times' && (
-        <Card>
-          <Row style={{ alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <View style={{ width: 90 }}>
-              <Field label="Times" value={times} onChangeText={setTimes} numeric />
-            </View>
-            <T kind="body" style={{ marginTop: 34 }}>
-              per
-            </T>
-            <View style={{ width: 90 }}>
-              <Field label="Period" value={interval} onChangeText={setInterval_} numeric />
-            </View>
-            <T kind="body" style={{ marginTop: 34 }}>
-              {quotaUnit}
-              {interval === '1' ? '' : 's'}
-            </T>
-          </Row>
-          <Row style={{ flexWrap: 'wrap' }}>
-            {PERIODS.map((u) => (
-              <Chip key={u} label={u[0].toUpperCase() + u.slice(1)} selected={quotaUnit === u} onPress={() => setQuotaUnit(u)} />
-            ))}
-          </Row>
-          <T kind="small">
-            {quotaUnit === 'day' && interval === '1'
-              ? `Tick it up to ${times || 'N'} times a day. It comes back tomorrow.`
-              : `Do it on any ${times || 'N'} days ${interval === '1' ? `each ${quotaUnit}` : `in each ${interval}-${quotaUnit} stretch`}. Once you tick it, it's back tomorrow until you hit ${times || 'N'}, then it waits for the next ${quotaUnit}.${quotaUnit === 'week' ? ' Weeks run Monday to Sunday.' : ''}`}
-          </T>
-        </Card>
-      )}
-      {repeat !== 'none' && repeat !== 'times' && (
-        <Card>
-          <Row style={{ alignItems: 'flex-start' }}>
-            <View style={{ width: 110 }}>
-              <Field label="Every" value={interval} onChangeText={setInterval_} numeric />
-            </View>
-            <T kind="body" style={{ marginTop: 34 }}>
-              {unit}
-              {interval === '1' ? '' : 's'}
-            </T>
-          </Row>
-          <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>Next one is scheduled</T>
-          <Row style={{ flexWrap: 'wrap' }}>
-            <Chip label="After I complete it" selected={anchor === 'completion'} onPress={() => setAnchor('completion')} />
-            <Chip label="On a fixed schedule" selected={anchor === 'calendar'} onPress={() => setAnchor('calendar')} />
-          </Row>
-          <T kind="small">
-            {anchor === 'completion'
-              ? `E.g. done late? The next one is due ${interval || 'N'} ${unit}(s) after you finish.`
-              : 'Stays on the original dates; missed slots are skipped, not stacked.'}
-          </T>
-        </Card>
-      )}
+      <RepeatPicker value={repeat} onChange={setRepeat} />
 
       <View style={{ marginTop: space.md }}>
         <Field label="Coin reward" value={coins} onChangeText={setCoins} numeric hint={isSide ? 'Optional for side quests — 0 is fine.' : 'Paid once per completed occurrence.'} />
