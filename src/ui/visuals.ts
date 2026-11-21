@@ -5,16 +5,25 @@ import type { CardTone, IconName } from './components';
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const word = (n: number) => WORDS[n] ?? String(n);
 
-/** "Daily", "Weekly", "Every 2 months", "One-off". */
+/** "Daily", "Weekly", "Every 2 months", "3× a week", "One-off". */
 export function recurrenceWord(rule: RecurrenceRule | undefined): string {
   if (!rule) return 'One-off';
+  if (rule.timesPerPeriod) {
+    const per = rule.interval === 1 ? `a ${rule.frequency}` : `every ${rule.interval} ${rule.frequency}s`;
+    return `${rule.timesPerPeriod}× ${per}`;
+  }
   if (rule.interval === 1) return { day: 'Daily', week: 'Weekly', month: 'Monthly', year: 'Yearly' }[rule.frequency];
   return `Every ${rule.interval} ${rule.frequency}s`;
 }
 
 /** Row meta line: "Daily quest · Run a half marathon" (spec §03 task cards). */
 export function questContext(s: Snapshot, task: TaskDefinition): string {
-  const kind = task.taskType === 'side' ? 'Side quest' : `${recurrenceWord(task.recurrence)} quest`;
+  const kind =
+    task.taskType === 'side'
+      ? 'Side quest'
+      : task.recurrence?.timesPerPeriod
+        ? `Quest · ${recurrenceWord(task.recurrence)}`
+        : `${recurrenceWord(task.recurrence)} quest`;
   const goal = task.goalId ? s.goals.find((g) => g.id === task.goalId)?.title : undefined;
   return goal ? `${kind} · ${goal}` : kind;
 }

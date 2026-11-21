@@ -16,20 +16,24 @@ import {
 import { formatFriendly } from '@/domain/dates';
 import type { AnchorPolicy, ChangeSet, RecurrenceFrequency, Snapshot, TaskType } from '@/domain/types';
 import type { Clock } from '@/domain/dates';
+import { quotaProgress } from '@/domain/selectors';
 import { useStore, useToday } from '@/state/store';
 import { Button, Card, Chip, ConfirmDialog, Field, Row, Screen, Segmented, StatusChip, T } from '@/ui/components';
 import { DateField } from '@/ui/date-field';
+import { quotaChip } from '@/ui/quest-row';
 import { font, space, usePalette } from '@/ui/theme';
 import { toast } from '@/ui/toast';
 
-type Repeat = 'none' | RecurrenceFrequency;
+type Repeat = 'none' | RecurrenceFrequency | 'times';
 const REPEATS: { value: Repeat; label: string }[] = [
   { value: 'none', label: 'Once' },
   { value: 'day', label: 'Daily' },
   { value: 'week', label: 'Weekly' },
   { value: 'month', label: 'Monthly' },
   { value: 'year', label: 'Yearly' },
+  { value: 'times', label: 'X times per…' },
 ];
+const PERIODS: RecurrenceFrequency[] = ['day', 'week', 'month', 'year'];
 
 export default function TaskForm() {
   const p = usePalette();
@@ -43,7 +47,10 @@ export default function TaskForm() {
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
   const [dueAt, setDueAt] = useState(existing ? nextDueOf(s, existing) : today);
-  const [repeat, setRepeat] = useState<Repeat>(existing?.recurrence?.frequency ?? 'none');
+  const rule = existing?.recurrence;
+  const [repeat, setRepeat] = useState<Repeat>(rule?.timesPerPeriod ? 'times' : (rule?.frequency ?? 'none'));
+  const [quotaUnit, setQuotaUnit] = useState<RecurrenceFrequency>(rule?.timesPerPeriod ? rule.frequency : 'week');
+  const [times, setTimes] = useState(String(rule?.timesPerPeriod ?? 3));
   const [interval, setInterval_] = useState(String(existing?.recurrence?.interval ?? 1));
   const [anchor, setAnchor] = useState<AnchorPolicy>(existing?.recurrence?.anchorPolicy ?? 'completion');
   const [coins, setCoins] = useState(String(existing?.rewardCoins ?? 10));
@@ -62,7 +69,8 @@ export default function TaskForm() {
 
   const goals = s.goals.filter((g) => g.status === 'active' || g.id === goalId);
   const isSide = taskType === 'side';
-  const unit = repeat === 'none' ? '' : repeat;
+  const unit = repeat === 'none' ? '' : repeat === 'times' ? quotaUnit : repeat;
+  const quota = existing ? quotaProgress(s, existing, today) : undefined;
 
   const save = async () => {
     if (saving) return;
@@ -73,7 +81,12 @@ export default function TaskForm() {
       goalId: isSide ? undefined : goalId,
       rewardCoins: coins.trim() === '' ? 0 : Number(coins),
       dueAt,
-      recurrence: repeat === 'none' ? undefined : { frequency: repeat, interval: Number(interval), anchorPolicy: anchor },
+      recurrence:
+        repeat === 'none'
+          ? undefined
+          : repeat === 'times'
+            ? { frequency: quotaUnit, interval: Number(interval), anchorPolicy: 'calendar', timesPerPeriod: Number(times) }
+            : { frequency: repeat, interval: Number(interval), anchorPolicy: anchor },
       reminderDaysBefore: isSide ? reminder : undefined,
     };
     setSaving(true);
@@ -124,10 +137,17 @@ export default function TaskForm() {
           ) : open ? (
             <>
               <Row style={{ flexWrap: 'wrap' }}>
-                <StatusChip
-                  tone={open.scheduledFor < today ? 'overdue' : open.scheduledFor === today ? 'due' : 'neutral'}
-                  label={open.scheduledFor < today ? 'Overdue' : `Open · ${formatFriendly(open.scheduledFor, today)}`}
-                />
+                {quota ? (
+                  <>
+                    <StatusChip {...quotaChip(quota)} />
+                    {open.scheduledFor > today && <StatusChip tone="neutral" label={`Next ${formatFriendly(open.scheduledFor, today)}`} />}
+                  </>
+                ) : (
+                  <StatusChip
+                    tone={open.scheduledFor < today ? 'overdue' : open.scheduledFor === today ? 'due' : 'neutral'}
+                    label={open.scheduledFor < today ? 'Overdue' : `Open · ${formatFriendly(open.scheduledFor, today)}`}
+                  />
+                )}
               </Row>
               <Button
                 title="Mark done"
@@ -152,7 +172,11 @@ export default function TaskForm() {
                   />
                 ))}
                 {existing.recurrence && (
-                  <Chip icon="play-skip-forward-outline" label="Skip this time" onPress={() => act((st, c) => skipOccurrence(st, c, open.id), 'Skipped · no coins', true)} />
+                  <Chip
+                    icon="play-skip-forward-outline"
+                    label={quota ? `Skip rest of ${quota.periodLabel}` : 'Skip this time'}
+                    onPress={() => act((st, c) => skipOccurrence(st, c, open.id), quota ? 'Skipped until the next period' : 'Skipped · no coins', true)}
+                  />
                 )}
               </Row>
             </>
@@ -185,7 +209,7 @@ export default function TaskForm() {
       <Field label="Title" value={title} onChangeText={setTitle} placeholder={isSide ? 'e.g. Clean the oven' : 'e.g. Study 30 minutes'} />
       <Field label="Description" value={description} onChangeText={setDescription} placeholder="Optional details" multiline />
 
-      <DateField label={existing ? 'Next due date' : 'Due date'} value={dueAt} onChange={setDueAt} today={today} />
+      <DateField label={existing ? 'Next due date' : repeat === 'times' ? 'Start date' : 'Due date'} value={dueAt} onChange={setDueAt} today={today} />
 
       <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>Repeat</T>
       <Row style={{ flexWrap: 'wrap' }}>
@@ -193,7 +217,36 @@ export default function TaskForm() {
           <Chip key={r.value} label={r.label} selected={repeat === r.value} onPress={() => setRepeat(r.value)} />
         ))}
       </Row>
-      {repeat !== 'none' && (
+      {repeat === 'times' && (
+        <Card>
+          <Row style={{ alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            <View style={{ width: 90 }}>
+              <Field label="Times" value={times} onChangeText={setTimes} numeric />
+            </View>
+            <T kind="body" style={{ marginTop: 34 }}>
+              per
+            </T>
+            <View style={{ width: 90 }}>
+              <Field label="Period" value={interval} onChangeText={setInterval_} numeric />
+            </View>
+            <T kind="body" style={{ marginTop: 34 }}>
+              {quotaUnit}
+              {interval === '1' ? '' : 's'}
+            </T>
+          </Row>
+          <Row style={{ flexWrap: 'wrap' }}>
+            {PERIODS.map((u) => (
+              <Chip key={u} label={u[0].toUpperCase() + u.slice(1)} selected={quotaUnit === u} onPress={() => setQuotaUnit(u)} />
+            ))}
+          </Row>
+          <T kind="small">
+            {quotaUnit === 'day' && interval === '1'
+              ? `Tick it up to ${times || 'N'} times a day. It comes back tomorrow.`
+              : `Do it on any ${times || 'N'} days ${interval === '1' ? `each ${quotaUnit}` : `in each ${interval}-${quotaUnit} stretch`}. Once you tick it, it's back tomorrow until you hit ${times || 'N'}, then it waits for the next ${quotaUnit}.${quotaUnit === 'week' ? ' Weeks run Monday to Sunday.' : ''}`}
+          </T>
+        </Card>
+      )}
+      {repeat !== 'none' && repeat !== 'times' && (
         <Card>
           <Row style={{ alignItems: 'flex-start' }}>
             <View style={{ width: 110 }}>

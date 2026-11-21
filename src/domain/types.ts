@@ -41,6 +41,11 @@ export interface RecurrenceRule {
   frequency: RecurrenceFrequency;
   interval: number;
   anchorPolicy: AnchorPolicy;
+  /**
+   * Set for "N times per period" quests (e.g. 3 times per week). Periods are calendar-aligned
+   * (weeks start Monday, months on the 1st) and `anchorPolicy` is ignored.
+   */
+  timesPerPeriod?: number;
 }
 
 export type TaskType = 'main' | 'side';

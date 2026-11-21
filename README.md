@@ -27,6 +27,7 @@ Data lives in each browser's IndexedDB, so the live site, localhost and your pho
 
 - **Add:** use **+ Add quest** or **+ Add side quest** on the Quests tab, or **+ Quest** on a goal.
 - **Change status:** tap a quest to open it. The **Status** card offers *Mark done*, move to *Tomorrow / In 3 days / In 7 days*, *Skip this time* (repeating quests) and *Archive*.
+- **Several times per period:** choose **Repeat → X times per…**, e.g. *3 times per 1 week*. Weeks run Monday to Sunday, months start on the 1st. Every tick pays the reward. The quest comes back the next day until the target is met, then waits for the next period. For one-day periods, such as *8× a day*, it comes back the same day. Missed sessions are not carried over and the quest never shows as overdue. The row shows *1 of 3 this week*, or *2 to go · 1 day left* when you're behind. The behind warning is skipped in a partial first week. *Skip rest of this week* jumps to the next period.
 - **Archived:** archived quests are listed under **Archived (N)** at the bottom of the Quests tab. Open one and press **Restore quest** to make it due again today.
 
 ```bash
@@ -87,7 +88,7 @@ double purchases even when the UI is working from stale data (spec FR-16).
 | Base allowance / prices | 30 min; packs 15 min = 25, 30 = 45, 60 = 80 coins. All editable in Settings |
 | Purchased minutes | Count for the current local day only (no rollover) |
 | Reset | Local midnight (re-checked every 30 s) |
-| Recurrence | Per quest: *after completion* (default) or *fixed schedule*. Missed slots are skipped, not stacked |
+| Recurrence | Per quest: *after completion* (default), *fixed schedule*, or *N times per period* (calendar-aligned). Missed slots are skipped, not stacked |
 | Overdue | Stays visible ("A little behind schedule"). Paid once when completed. Side quests can be snoozed 3 days or rescheduled |
 | Unchecking a completed quest | Not supported. Completions are final, which keeps the ledger simple |
 | Deselecting an app | Minutes it already used today still count. Time is never refunded |

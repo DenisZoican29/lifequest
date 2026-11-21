@@ -4,7 +4,7 @@ import { Animated, Pressable, StyleSheet, View } from 'react-native';
 
 import { completeOccurrence, snoozeOccurrence } from '@/domain/commands';
 import { formatFriendly } from '@/domain/dates';
-import type { QuestItem } from '@/domain/selectors';
+import type { QuestItem, QuotaProgress } from '@/domain/selectors';
 import { useStore } from '@/state/store';
 
 import { Coin } from './art';
@@ -18,12 +18,26 @@ export async function completeQuest(item: QuestItem) {
   const res = await useStore.getState().run((s, c) => completeOccurrence(s, c, item.occurrence.id));
   if (!res.ok) return toast(res.message, 'error');
   const coins = item.task.rewardCoins;
-  if (item.task.taskType === 'side') {
+  if (item.quota) {
+    const q = item.quota;
+    const msg = q.done + 1 >= q.times ? `${q.times} of ${q.times} ${q.periodLabel}. Target hit!` : `${q.done + 1} of ${q.times} ${q.periodLabel}`;
+    toast(coins > 0 ? `${msg} · +${coins} coins` : msg, coins > 0 ? 'coin' : 'success');
+  } else if (item.task.taskType === 'side') {
     const msg = `Done · ${seeYouAgain(item.task.recurrence)}`;
     toast(coins > 0 ? `${msg} · +${coins} coins` : msg, coins > 0 ? 'coin' : 'success');
   } else {
     toast(coins > 0 ? `Nice work! +${coins} coins` : 'Nice work!', coins > 0 ? 'coin' : 'success');
   }
+}
+
+/** "1 of 3 this week", or "2 to go · 1 day left" when running behind. */
+export function quotaChip(q: QuotaProgress): { tone: 'done' | 'overdue' | 'weekly'; label: string } {
+  if (q.done >= q.times) return { tone: 'done', label: `${q.times} of ${q.times} ${q.periodLabel}` };
+  if (q.behind) {
+    const left = q.times - q.done;
+    return { tone: 'overdue', label: `${left} to go · ${q.daysLeft} day${q.daysLeft === 1 ? '' : 's'} left` };
+  }
+  return { tone: 'weekly', label: `${q.done} of ${q.times} ${q.periodLabel}` };
 }
 
 /** Soft checkmark pulse; skipped when reduced motion is on. */
@@ -92,10 +106,18 @@ export function QuestRow({ item, today, showDue = true }: { item: QuestItem; tod
         <T kind="meta" numberOfLines={1}>
           {questContext(s, task)}
         </T>
-        {open && (item.overdue || (showDue && due !== today)) && (
-          <View style={{ marginTop: 4 }}>
-            <StatusChip tone={item.overdue ? 'overdue' : 'neutral'} label={item.overdue ? 'Overdue' : formatFriendly(due, today)} />
-          </View>
+        {open && item.quota ? (
+          <Row gap={6} style={{ marginTop: 4, flexWrap: 'wrap' }}>
+            <StatusChip {...quotaChip(item.quota)} />
+            {showDue && item.dueInDays > 0 && <StatusChip tone="neutral" label={`Next ${formatFriendly(due, today)}`} />}
+          </Row>
+        ) : (
+          open &&
+          (item.overdue || (showDue && due !== today)) && (
+            <View style={{ marginTop: 4 }}>
+              <StatusChip tone={item.overdue ? 'overdue' : 'neutral'} label={item.overdue ? 'Overdue' : formatFriendly(due, today)} />
+            </View>
+          )
         )}
       </Pressable>
       {task.rewardCoins > 0 && (
@@ -120,6 +142,8 @@ export function SideQuestCard({ item, today }: { item: QuestItem; today: string 
   const dueSoon = !done && !item.overdue && (item.reminderActive || item.dueInDays <= 7);
   const chip = done
     ? { tone: 'done' as const, label: 'Done recently' }
+    : item.quota
+      ? quotaChip(item.quota)
     : item.overdue
       ? { tone: 'overdue' as const, label: 'A little behind schedule' }
       : dueSoon

@@ -13,8 +13,8 @@ import {
   toggleMilestone,
 } from '../src/domain/commands';
 import { coinBalance } from '../src/domain/economy';
-import { nextDueDate } from '../src/domain/recurrence';
-import { goalProgress, questsCompleted, questsDueToday, sideQuests } from '../src/domain/selectors';
+import { nextDueDate, periodContaining } from '../src/domain/recurrence';
+import { goalProgress, questsCompleted, questsDueToday, questsUpcoming, sideQuests } from '../src/domain/selectors';
 import { world } from './helpers';
 
 describe('recurrence', () => {
@@ -132,6 +132,94 @@ describe('quests', () => {
     expect(() => createTask(w.s, w.clock, { title: ' ', description: '', taskType: 'main', rewardCoins: 1, dueAt: '2026-11-16' })).toThrow(/Title/);
     expect(() => createTask(w.s, w.clock, { title: 'x', description: '', taskType: 'main', rewardCoins: -1, dueAt: '2026-11-16' })).toThrow(/Coin reward/);
     expect(() => createTask(w.s, w.clock, { title: 'x', description: '', taskType: 'main', rewardCoins: 1, dueAt: '2026-02-30' })).toThrow(/Due date/);
+  });
+});
+
+describe('times per period', () => {
+  // BASE is Monday 16 Nov 2026.
+  const gym = { frequency: 'week' as const, interval: 1, anchorPolicy: 'calendar' as const, timesPerPeriod: 3 };
+  const addGym = (w: ReturnType<typeof world>) =>
+    w.run((s, c) => createTask(s, c, { title: 'Gym', description: '', taskType: 'main', rewardCoins: 10, dueAt: c.today(), recurrence: gym }));
+  const tickToday = (w: ReturnType<typeof world>) =>
+    w.run((s, c) => completeOccurrence(s, c, questsDueToday(s, c.today())[0].occurrence.id));
+
+  it('periods are calendar aligned', () => {
+    expect(periodContaining(gym, '2026-11-18', '2026-11-22')).toEqual({ start: '2026-11-16', end: '2026-11-22' });
+    expect(periodContaining(gym, '2026-11-18', '2026-11-23')).toEqual({ start: '2026-11-23', end: '2026-11-29' });
+    const monthly = { ...gym, frequency: 'month' as const };
+    expect(periodContaining(monthly, '2026-11-18', '2027-02-14')).toEqual({ start: '2027-02-01', end: '2027-02-28' });
+    const fortnight = { ...gym, interval: 2 };
+    expect(periodContaining(fortnight, '2026-11-18', '2026-12-03')).toEqual({ start: '2026-11-30', end: '2026-12-13' });
+  });
+
+  it('3 times per week: comes back tomorrow until done, then next Monday, paying each time', () => {
+    const w = world();
+    addGym(w);
+    expect(questsDueToday(w.s, w.clock.today())[0].quota).toMatchObject({ done: 0, times: 3, daysLeft: 7, periodLabel: 'this week' });
+    tickToday(w);
+    expect(questsDueToday(w.s, w.clock.today())).toHaveLength(0);
+    expect(questsUpcoming(w.s, w.clock.today())[0].occurrence.scheduledFor).toBe('2026-11-17');
+    w.run((s, c) => shiftDays(s, c, 2)); // Wednesday: skipped Tuesday, still due
+    expect(questsDueToday(w.s, w.clock.today())[0]).toMatchObject({ overdue: false, quota: { done: 1, daysLeft: 5 } });
+    tickToday(w);
+    w.run((s, c) => shiftDays(s, c, 1));
+    tickToday(w);
+    expect(coinBalance(w.s.wallet)).toBe(30);
+    const next = w.s.occurrences.find((o) => o.status === 'open')!;
+    expect(next.scheduledFor).toBe('2026-11-23');
+    expect(questsUpcoming(w.s, w.clock.today())[0].quota).toMatchObject({ done: 3, times: 3 });
+  });
+
+  it('an unfinished week rolls into the next one without stacking or going overdue', () => {
+    const w = world();
+    addGym(w);
+    tickToday(w);
+    w.run((s, c) => shiftDays(s, c, 8)); // next Tuesday
+    const due = questsDueToday(w.s, w.clock.today());
+    expect(due).toHaveLength(1);
+    expect(due[0]).toMatchObject({ overdue: false, quota: { done: 0, daysLeft: 6, behind: false } });
+    w.run((s, c) => shiftDays(s, c, 4)); // Saturday, 0 of 3 with 2 days left
+    expect(questsDueToday(w.s, w.clock.today())[0].quota).toMatchObject({ behind: true });
+  });
+
+  it('skipping jumps to the next period', () => {
+    const w = world();
+    addGym(w);
+    w.run((s, c) => skipOccurrence(s, c, s.occurrences[0].id));
+    expect(w.s.occurrences.find((o) => o.status === 'open')!.scheduledFor).toBe('2026-11-23');
+  });
+
+  it('several times per day stays on the same day until done', () => {
+    const w = world();
+    w.run((s, c) =>
+      createTask(s, c, {
+        title: 'Glass of water',
+        description: '',
+        taskType: 'main',
+        rewardCoins: 1,
+        dueAt: c.today(),
+        recurrence: { frequency: 'day', interval: 1, anchorPolicy: 'calendar', timesPerPeriod: 2 },
+      }),
+    );
+    tickToday(w);
+    expect(questsDueToday(w.s, w.clock.today())[0].quota).toMatchObject({ done: 1, times: 2, periodLabel: 'today' });
+    tickToday(w);
+    expect(questsDueToday(w.s, w.clock.today())).toHaveLength(0);
+    expect(w.s.occurrences.find((o) => o.status === 'open')!.scheduledFor).toBe('2026-11-17');
+  });
+
+  it('a quest started late in the week is not flagged as behind', () => {
+    const w = world();
+    w.run((s, c) => shiftDays(s, c, 5)); // Saturday
+    addGym(w);
+    expect(questsDueToday(w.s, w.clock.today())[0].quota).toMatchObject({ done: 0, daysLeft: 2, behind: false });
+  });
+
+  it('rejects a bad target', () => {
+    const w = world();
+    expect(() =>
+      createTask(w.s, w.clock, { title: 'x', description: '', taskType: 'main', rewardCoins: 1, dueAt: '2026-11-16', recurrence: { ...gym, timesPerPeriod: 0 } }),
+    ).toThrow(/Times per period/);
   });
 });
 

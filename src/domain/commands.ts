@@ -6,7 +6,7 @@
 import { addPeriod, isLocalDate } from './dates';
 import { allowanceFor, coinBalance } from './economy';
 import { newId } from './ids';
-import { nextDueDate } from './recurrence';
+import { isQuota, nextDueDate, nextQuotaDate, periodContaining } from './recurrence';
 import type {
   AppSelection,
   Cadence,
@@ -74,6 +74,12 @@ function validateRule(rule: RecurrenceRule | undefined): RecurrenceRule | undefi
   if (!rule) return undefined;
   if (!Number.isInteger(rule.interval) || rule.interval < 1 || rule.interval > 365) {
     throw new DomainError('invalid', 'Repeat interval must be a whole number between 1 and 365.');
+  }
+  if (rule.timesPerPeriod !== undefined) {
+    if (!Number.isInteger(rule.timesPerPeriod) || rule.timesPerPeriod < 1 || rule.timesPerPeriod > 100) {
+      throw new DomainError('invalid', 'Times per period must be a whole number between 1 and 100.');
+    }
+    return { frequency: rule.frequency, interval: rule.interval, anchorPolicy: 'calendar', timesPerPeriod: rule.timesPerPeriod };
   }
   return { frequency: rule.frequency, interval: rule.interval, anchorPolicy: rule.anchorPolicy };
 }
@@ -260,16 +266,26 @@ export function restoreTask(s: Snapshot, clock: Clock, id: string): ChangeSet {
 
 export const occurrenceRewardKey =(occurrenceId: string) => `occurrence:${occurrenceId}`;
 
-function followUp(task: TaskDefinition, occ: TaskOccurrence, finishedOn: string): TaskOccurrence[] {
-  if (!task.recurrence || !task.active) return [];
-  return [
-    {
-      id: newId(),
-      taskDefinitionId: task.id,
-      scheduledFor: nextDueDate(task.recurrence, task.dueAt, occ.scheduledFor, finishedOn),
-      status: 'open',
-    },
-  ];
+/** Completions of a task that fall inside the quota period containing `day`. */
+export function doneInPeriod(s: Snapshot, task: TaskDefinition, day: string): number {
+  if (!task.recurrence) return 0;
+  const { start, end } = periodContaining(task.recurrence, task.dueAt, day);
+  return s.occurrences.filter(
+    (o) => o.taskDefinitionId === task.id && o.status === 'completed' && !!o.completedOn && o.completedOn >= start && o.completedOn <= end,
+  ).length;
+}
+
+/**
+ * The next open occurrence after one is finished. `completed` is how many now count toward the
+ * current quota period (pass Infinity to skip the rest of the period).
+ */
+function followUp(task: TaskDefinition, occ: TaskOccurrence, finishedOn: string, completed = 0): TaskOccurrence[] {
+  const rule = task.recurrence;
+  if (!rule || !task.active) return [];
+  const scheduledFor = isQuota(rule)
+    ? nextQuotaDate(rule, task.dueAt, finishedOn, completed)
+    : nextDueDate(rule, task.dueAt, occ.scheduledFor, finishedOn);
+  return [{ id: newId(), taskDefinitionId: task.id, scheduledFor, status: 'open' }];
 }
 
 /**
@@ -301,19 +317,19 @@ export function completeOccurrence(s: Snapshot, clock: Clock, occurrenceId: stri
   }
   const done: TaskOccurrence = { ...occ, status: 'completed', completedAt: now, completedOn: today, rewardTransactionId };
   return changes({
-    put: { occurrences: [done, ...followUp(task, occ, today)], wallet },
+    put: { occurrences: [done, ...followUp(task, occ, today, doneInPeriod(s, task, today) + 1)], wallet },
     guards: [{ kind: 'occurrenceOpen', occurrenceId: occ.id }, { kind: 'uniqueIdempotencyKey', key }],
   });
 }
 
-/** Skips a recurring occurrence without reward and schedules the next one. */
+/** Skips a recurring occurrence without reward and schedules the next one (quota quests: the next period). */
 export function skipOccurrence(s: Snapshot, clock: Clock, occurrenceId: string): ChangeSet {
   const occ = find(s.occurrences, occurrenceId, 'Quest');
   if (occ.status !== 'open') throw new DomainError('already-completed', 'This quest is already closed.');
   const task = find(s.tasks, occ.taskDefinitionId, 'Task');
   if (!task.recurrence) throw new DomainError('invalid', 'Only repeating quests can be skipped.');
   return changes({
-    put: { occurrences: [{ ...occ, status: 'skipped' }, ...followUp(task, occ, clock.today())] },
+    put: { occurrences: [{ ...occ, status: 'skipped' }, ...followUp(task, occ, clock.today(), Infinity)] },
     guards: [{ kind: 'occurrenceOpen', occurrenceId: occ.id }],
   });
 }

@@ -1,4 +1,6 @@
+import { doneInPeriod } from './commands';
 import { daysBetween } from './dates';
+import { isQuota, periodContaining } from './recurrence';
 import type { Goal, LocalDate, Milestone, Snapshot, TaskDefinition, TaskOccurrence, TaskType } from './types';
 
 export interface QuestItem {
@@ -9,16 +11,54 @@ export interface QuestItem {
   overdue: boolean;
   /** Side quests: inside the reminder window. */
   reminderActive: boolean;
+  /** "N times per period" quests: progress in the period containing today. */
+  quota?: QuotaProgress;
 }
 
-function toItem(o: TaskOccurrence, task: TaskDefinition, today: LocalDate): QuestItem {
+export interface QuotaProgress {
+  done: number;
+  times: number;
+  /** Days left in the period, counting today. */
+  daysLeft: number;
+  /** "this week", "today", "this 2-week period". */
+  periodLabel: string;
+  /** More left to do than days remain (periods longer than a day, from the first full period). */
+  behind: boolean;
+}
+
+export function periodLabel(frequency: string, interval: number): string {
+  if (interval === 1) return frequency === 'day' ? 'today' : `this ${frequency}`;
+  return `this ${interval}-${frequency} period`;
+}
+
+export function quotaProgress(s: Snapshot, task: TaskDefinition, today: LocalDate): QuotaProgress | undefined {
+  const rule = task.recurrence;
+  if (!isQuota(rule)) return undefined;
+  const done = doneInPeriod(s, task, today);
+  const { start, end } = periodContaining(rule, task.dueAt, today);
+  const daysLeft = daysBetween(today, end) + 1;
+  const multiDay = !(rule.frequency === 'day' && rule.interval <= 1);
+  return {
+    done,
+    times: rule.timesPerPeriod,
+    daysLeft,
+    periodLabel: periodLabel(rule.frequency, rule.interval),
+    // No warning in a partial first period (e.g. a weekly quest started on Saturday).
+    behind: multiDay && start >= task.dueAt && rule.timesPerPeriod - done > daysLeft,
+  };
+}
+
+function toItem(s: Snapshot, o: TaskOccurrence, task: TaskDefinition, today: LocalDate): QuestItem {
   const dueInDays = daysBetween(today, o.scheduledFor);
   const reminder = task.reminderDaysBefore;
+  const quota = quotaProgress(s, task, today);
   return {
     occurrence: o,
     task,
     dueInDays,
-    overdue: o.status === 'open' && dueInDays < 0,
+    quota,
+    // A quota quest left open from an earlier period just carries on in the current one.
+    overdue: o.status === 'open' && dueInDays < 0 && !quota,
     reminderActive: o.status === 'open' && reminder !== undefined && dueInDays >= 0 && dueInDays <= reminder,
   };
 }
@@ -28,7 +68,7 @@ function join(s: Snapshot, filter: (o: TaskOccurrence) => boolean, today: LocalD
   const out: QuestItem[] = [];
   for (const o of s.occurrences) {
     const t = tasks.get(o.taskDefinitionId);
-    if (t && filter(o)) out.push(toItem(o, t, today));
+    if (t && filter(o)) out.push(toItem(s, o, t, today));
   }
   return out;
 }
