@@ -1,5 +1,7 @@
 import { doneInPeriod } from './commands';
-import { daysBetween } from './dates';
+import { format } from 'date-fns';
+
+import { daysBetween, fromLocalDate } from './dates';
 import { isQuota, periodContaining } from './recurrence';
 import type { Goal, LocalDate, Milestone, Snapshot, TaskDefinition, TaskOccurrence, TaskType } from './types';
 
@@ -24,6 +26,10 @@ export interface QuotaProgress {
   periodLabel: string;
   /** More left to do than days remain (periods longer than a day, from the first full period). */
   behind: boolean;
+  /** Date-range quests: the end date passed before the target was met ("not done"). */
+  missed?: boolean;
+  /** Date-range quests: last day of the window. */
+  endsOn?: LocalDate;
 }
 
 export function periodLabel(frequency: string, interval: number): string {
@@ -32,6 +38,20 @@ export function periodLabel(frequency: string, interval: number): string {
 }
 
 export function quotaProgress(s: Snapshot, task: TaskDefinition, today: LocalDate): QuotaProgress | undefined {
+  if (task.window) {
+    const w = task.window;
+    const done = doneInPeriod(s, task, today);
+    const daysLeft = today > w.end ? 0 : daysBetween(today < w.start ? w.start : today, w.end) + 1;
+    return {
+      done,
+      times: w.times,
+      daysLeft,
+      periodLabel: `by ${format(fromLocalDate(w.end), 'd MMM')}`,
+      behind: today >= w.start && today <= w.end && w.times - done > daysLeft,
+      missed: today > w.end && done < w.times,
+      endsOn: w.end,
+    };
+  }
   const rule = task.recurrence;
   if (!isQuota(rule)) return undefined;
   const done = doneInPeriod(s, task, today);
@@ -138,7 +158,7 @@ export interface GoalProgress {
  */
 export function goalProgress(s: Snapshot, goalId: string): GoalProgress {
   const milestones = s.milestones.filter((m) => m.goalId === goalId);
-  const oneOffs = s.tasks.filter((t) => t.goalId === goalId && !t.recurrence && t.taskType === 'main');
+  const oneOffs = s.tasks.filter((t) => t.goalId === goalId && !t.recurrence && !t.window && t.taskType === 'main');
   const oneOffIds = new Set(oneOffs.map((t) => t.id));
   const doneTasks = new Set(
     s.occurrences.filter((o) => oneOffIds.has(o.taskDefinitionId) && o.status === 'completed').map((o) => o.taskDefinitionId),

@@ -8,12 +8,13 @@ import type { QuestItem, QuotaProgress } from '@/domain/selectors';
 import { useStore } from '@/state/store';
 
 import { Coin } from './art';
+import { NotDoneSheet } from './not-done-sheet';
 import { Button, Ionicons, Row, StatusChip, T } from './components';
 import { nativeDriver, useReducedMotion } from './motion';
 import { SwipeToLog } from './swipe-to-log';
 import { font, radius, space, usePalette } from './theme';
 import { toast } from './toast';
-import { questContext, recurrenceWord, seeYouAgain } from './visuals';
+import { questContext, seeYouAgain, taskRepeatWord } from './visuals';
 
 export async function completeQuest(item: QuestItem) {
   const res = await useStore.getState().run((s, c) => completeOccurrence(s, c, item.occurrence.id));
@@ -33,6 +34,7 @@ export async function completeQuest(item: QuestItem) {
 
 /** "1 of 3 this week", or "2 to go · 1 day left" when running behind. */
 export function quotaChip(q: QuotaProgress): { tone: 'done' | 'overdue' | 'weekly'; label: string } {
+  if (q.missed) return { tone: 'overdue', label: `Not done · ${q.done} of ${q.times}` };
   if (q.done >= q.times) return { tone: 'done', label: `${q.times} of ${q.times} ${q.periodLabel}` };
   if (q.behind) {
     const left = q.times - q.done;
@@ -126,9 +128,12 @@ export function QuestRow({ item, today, showDue = true }: { item: QuestItem; tod
   const open = occurrence.status === 'open';
   const due = occurrence.scheduledFor;
   const quota = item.quota;
+  const missed = !!quota?.missed && open;
+  const [sheet, setSheet] = useState(false);
   // Times-per-period quests are logged by swiping, and only once they're due (not tomorrow's).
-  const canLog = !!quota && open && item.dueInDays <= 0;
+  const canLog = !!quota && open && item.dueInDays <= 0 && !missed && quota.done < quota.times;
   const nextOpen = quota && !open ? s.occurrences.find((o) => o.taskDefinitionId === task.id && o.status === 'open') : undefined;
+  const nextWord = task.window ? 'Starts' : 'Next';
 
   return (
     <SwipeToLog enabled={canLog} onLog={() => void completeQuest(item)} label={`Log one ${task.title}`} borderRadius={radius.md + 2}>
@@ -137,8 +142,8 @@ export function QuestRow({ item, today, showDue = true }: { item: QuestItem; tod
         <Pressable
           style={{ flex: 1, paddingVertical: space.md, gap: 3 }}
           accessibilityRole="button"
-          accessibilityLabel={`Edit ${task.title}`}
-          onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })}>
+          accessibilityLabel={missed ? `${task.title}, not done. Give it more time or delete it` : `Edit ${task.title}`}
+          onPress={() => (missed ? setSheet(true) : router.push({ pathname: '/task-form', params: { id: task.id } }))}>
           <T kind="bodyStrong" color={open ? p.ink : p.muted} numberOfLines={2}>
             {task.title}
           </T>
@@ -148,8 +153,9 @@ export function QuestRow({ item, today, showDue = true }: { item: QuestItem; tod
           {quota ? (
             <Row gap={6} style={{ marginTop: 4, flexWrap: 'wrap' }}>
               <StatusChip {...quotaChip(quota)} />
-              {open && item.dueInDays > 0 && <StatusChip tone="neutral" label={`Next ${formatFriendly(due, today)}`} />}
-              {nextOpen && quota.done < quota.times && <StatusChip tone="neutral" label={`Next ${formatFriendly(nextOpen.scheduledFor, today)}`} />}
+              {open && item.dueInDays > 0 && <StatusChip tone="neutral" label={`${nextWord} ${formatFriendly(due, today)}`} />}
+              {nextOpen && quota.done < quota.times && <StatusChip tone="neutral" label={`${nextWord} ${formatFriendly(nextOpen.scheduledFor, today)}`} />}
+              {missed && quota.endsOn && <StatusChip tone="neutral" icon="hand-left-outline" label="Tap to reschedule or delete" />}
               {canLog && <SwipeHint />}
             </Row>
           ) : (
@@ -170,6 +176,7 @@ export function QuestRow({ item, today, showDue = true }: { item: QuestItem; tod
           </Row>
         )}
       </View>
+      {sheet && <NotDoneSheet task={task} onClose={() => setSheet(false)} />}
     </SwipeToLog>
   );
 }
@@ -191,9 +198,11 @@ export function SideQuestCard({ item, today }: { item: QuestItem; today: string 
       : dueSoon
         ? { tone: 'due' as const, label: item.dueInDays === 0 ? 'Due today' : 'Due soon' }
         : { tone: 'demo' as const, label: 'Maintenance' };
-  const when = done ? `Next due ${nextOpen ? formatFriendly(nextOpen.scheduledFor, today) : 'not scheduled'}` : `${recurrenceWord(task.recurrence)} · ${formatFriendly(occurrence.scheduledFor, today)}`;
+  const when = done ? `Next due ${nextOpen ? formatFriendly(nextOpen.scheduledFor, today) : 'not scheduled'}` : `${taskRepeatWord(task)} · ${formatFriendly(occurrence.scheduledFor, today)}`;
 
-  const canLog = !!item.quota && !done && item.dueInDays <= 0;
+  const missed = !!item.quota?.missed && !done;
+  const [sheet, setSheet] = useState(false);
+  const canLog = !!item.quota && !done && item.dueInDays <= 0 && !missed && item.quota.done < item.quota.times;
   const snooze = async () => {
     const res = await useStore.getState().run((s, c) => snoozeOccurrence(s, c, occurrence.id, 3));
     toast(res.ok ? 'Snoozed for 3 days' : res.message, res.ok ? 'success' : 'error');
@@ -206,8 +215,8 @@ export function SideQuestCard({ item, today }: { item: QuestItem; today: string 
           <Pressable
             style={{ flex: 1, gap: 6 }}
             accessibilityRole="button"
-            accessibilityLabel={`Edit ${task.title}`}
-            onPress={() => router.push({ pathname: '/task-form', params: { id: task.id } })}>
+            accessibilityLabel={missed ? `${task.title}, not done. Give it more time or delete it` : `Edit ${task.title}`}
+            onPress={() => (missed ? setSheet(true) : router.push({ pathname: '/task-form', params: { id: task.id } }))}>
             <StatusChip tone={chip.tone} label={chip.label} />
             <T kind="h3">{task.title}</T>
             <T kind="meta">{when}</T>
@@ -226,6 +235,7 @@ export function SideQuestCard({ item, today }: { item: QuestItem; today: string 
             <SwipeHint />
           </View>
         )}
+        {missed && <Button compact kind="secondary" title="Reschedule or delete" onPress={() => setSheet(true)} style={{ marginTop: space.sm }} />}
         {!done && !item.quota && (
           <Row gap={space.sm} style={{ marginTop: space.sm }}>
             <Button compact kind="secondary" title="Complete" icon="checkmark" onPress={() => void completeQuest(item)} style={{ flex: 1 }} accessibilityLabel={`Complete ${task.title}`} />
@@ -236,6 +246,7 @@ export function SideQuestCard({ item, today }: { item: QuestItem; today: string 
           </Row>
         )}
       </View>
+      {sheet && <NotDoneSheet task={task} onClose={() => setSheet(false)} />}
     </SwipeToLog>
   );
 }

@@ -9,7 +9,6 @@ import { newId } from './ids';
 import { isQuota, nextDueDate, nextQuotaDate, periodContaining } from './recurrence';
 import type {
   AppSelection,
-  Cadence,
   ChangeSet,
   Goal,
   GoalStatus,
@@ -19,6 +18,7 @@ import type {
   Snapshot,
   TaskDefinition,
   TaskOccurrence,
+  TargetWindow,
   TaskType,
   ThemePreference,
   TimeOffer,
@@ -92,11 +92,19 @@ function find<T extends { id: string }>(rows: readonly T[], id: string, what: st
 
 // ---------------------------------------------------------------- goals
 
+/** An end goal ("Get a new job") with a deadline; quests linked to it drive its status. */
 export interface GoalInput {
   title: string;
   description: string;
-  cadence: Cadence;
-  deadline?: string;
+  deadline: string;
+}
+
+function requireDeadline(value: string, today: string, previous?: string): string {
+  const d = requireDate(value, 'Deadline');
+  if (!d) throw new DomainError('invalid', 'Pick a deadline for this goal.');
+  // Keeping an existing (possibly passed) deadline is fine; a new one must not be in the past.
+  if (d < today && d !== previous) throw new DomainError('invalid', 'The deadline must be today or later.');
+  return d;
 }
 
 export function createGoal(_s: Snapshot, clock: Clock, input: GoalInput): ChangeSet {
@@ -105,8 +113,7 @@ export function createGoal(_s: Snapshot, clock: Clock, input: GoalInput): Change
     id: newId(),
     title: requireText(input.title, 'Title'),
     description: input.description.trim(),
-    cadence: input.cadence,
-    deadline: requireDate(input.deadline, 'Deadline'),
+    deadline: requireDeadline(input.deadline, clock.today()),
     status: 'active',
     createdAt: now,
     updatedAt: now,
@@ -123,8 +130,7 @@ export function updateGoal(s: Snapshot, clock: Clock, id: string, input: GoalInp
           ...goal,
           title: requireText(input.title, 'Title'),
           description: input.description.trim(),
-          cadence: input.cadence,
-          deadline: requireDate(input.deadline, 'Deadline'),
+          deadline: requireDeadline(input.deadline, clock.today(), goal.deadline),
           updatedAt: clock.now().toISOString(),
         },
       ],
@@ -173,11 +179,26 @@ export interface TaskInput {
   rewardCoins: number;
   dueAt: string;
   recurrence?: RecurrenceRule;
+  /** "N times between two dates". Replaces `recurrence`; `dueAt` is ignored in favour of `window.start`. */
+  window?: TargetWindow;
   reminderDaysBefore?: number;
 }
 
+function validateWindow(w: TargetWindow | undefined): TargetWindow | undefined {
+  if (!w) return undefined;
+  const start = requireDate(w.start, 'Start date');
+  const end = requireDate(w.end, 'End date');
+  if (!start || !end) throw new DomainError('invalid', 'Pick a start and an end date.');
+  if (end < start) throw new DomainError('invalid', 'The end date must be on or after the start date.');
+  if (!Number.isInteger(w.times) || w.times < 1 || w.times > 100) {
+    throw new DomainError('invalid', 'Times must be a whole number between 1 and 100.');
+  }
+  return { start, end, times: w.times };
+}
+
 function validateTask(s: Snapshot, input: TaskInput) {
-  const dueAt = requireDate(input.dueAt, 'Due date');
+  const window = validateWindow(input.window);
+  const dueAt = window ? window.start : requireDate(input.dueAt, 'Due date');
   if (!dueAt) throw new DomainError('invalid', 'Due date is required.');
   if (input.goalId) {
     if (input.taskType === 'side') throw new DomainError('invalid', 'Side quests cannot be linked to a goal.');
@@ -190,7 +211,8 @@ function validateTask(s: Snapshot, input: TaskInput) {
     goalId: input.taskType === 'main' ? input.goalId || undefined : undefined,
     rewardCoins: requireNonNegativeInt(input.rewardCoins, 'Coin reward', 10_000),
     dueAt,
-    recurrence: validateRule(input.recurrence),
+    recurrence: window ? undefined : validateRule(input.recurrence),
+    window,
     reminderDaysBefore:
       input.reminderDaysBefore === undefined
         ? undefined
@@ -200,9 +222,11 @@ function validateTask(s: Snapshot, input: TaskInput) {
 
 export function createTask(s: Snapshot, clock: Clock, input: TaskInput): ChangeSet {
   const now = clock.now().toISOString();
+  const valid = validateTask(s, input);
+  if (valid.window && valid.window.end < clock.today()) throw new DomainError('invalid', 'The end date must be today or later.');
   const task: TaskDefinition = {
     id: newId(),
-    ...validateTask(s, input),
+    ...valid,
     active: true,
     createdAt: now,
     updatedAt: now,
@@ -226,6 +250,11 @@ export function updateTask(s: Snapshot, clock: Clock, id: string, input: TaskInp
   const task = find(s.tasks, id, 'Task');
   const valid = validateTask(s, input);
   const open = s.occurrences.filter((o) => o.taskDefinitionId === id && o.status === 'open');
+  if (valid.window) {
+    // Date-range quests: the form edits the window itself; what's already done inside it still counts.
+    const updated: TaskDefinition = { ...task, ...valid, updatedAt: clock.now().toISOString() };
+    return changes({ put: { tasks: [updated], occurrences: windowOccurrences(s, updated, valid.window, clock.today()) } });
+  }
   // The form edits the *next* due date. Moving it re-anchors the schedule there.
   const moved = valid.dueAt !== nextDueOf(s, task);
   const updated: TaskDefinition = {
@@ -236,6 +265,44 @@ export function updateTask(s: Snapshot, clock: Clock, id: string, input: TaskInp
   };
   const occurrences = moved ? open.map((o) => ({ ...o, scheduledFor: valid.dueAt })) : [];
   return changes({ put: { tasks: [updated], occurrences } });
+}
+
+/** Completions of a task that fall inside a date window. */
+export function doneInWindow(s: Snapshot, taskId: string, w: TargetWindow): number {
+  return s.occurrences.filter(
+    (o) => o.taskDefinitionId === taskId && o.status === 'completed' && !!o.completedOn && o.completedOn >= w.start && o.completedOn <= w.end,
+  ).length;
+}
+
+/** The open occurrence a date-range quest should have after its window changed: none once the target is met. */
+function windowOccurrences(s: Snapshot, task: TaskDefinition, w: TargetWindow, today: string): TaskOccurrence[] {
+  if (doneInWindow(s, task.id, w) >= w.times) return [];
+  const when = w.start > today ? w.start : today;
+  const open = s.occurrences.filter((o) => o.taskDefinitionId === task.id && o.status === 'open');
+  if (open.length) return open.map((o) => ({ ...o, scheduledFor: when }));
+  return [{ id: newId(), taskDefinitionId: task.id, scheduledFor: when, status: 'open' }];
+}
+
+/** Gives a date-range quest that ran out of time a new end date. What was already done still counts. */
+export function rescheduleWindow(s: Snapshot, clock: Clock, id: string, end: string): ChangeSet {
+  const task = find(s.tasks, id, 'Task');
+  if (!task.window) throw new DomainError('invalid', 'Only date-range quests can be given more time.');
+  const e = requireDate(end, 'End date');
+  if (!e) throw new DomainError('invalid', 'Pick a new end date.');
+  if (e < clock.today()) throw new DomainError('invalid', 'Pick today or a later date.');
+  const window: TargetWindow = { ...task.window, end: e };
+  const updated: TaskDefinition = { ...task, window, active: true, updatedAt: clock.now().toISOString() };
+  return changes({ put: { tasks: [updated], occurrences: windowOccurrences(s, updated, window, clock.today()) } });
+}
+
+/**
+ * Deletes a quest for good. Its open occurrences go with it; completed ones and the coins they
+ * paid stay as history (the ledger is never rewritten).
+ */
+export function deleteTask(s: Snapshot, _clock: Clock, id: string): ChangeSet {
+  find(s.tasks, id, 'Task');
+  const pending = s.occurrences.filter((o) => o.taskDefinitionId === id && o.status !== 'completed').map((o) => o.id);
+  return changes({ delete: { tasks: [id], occurrences: pending } });
 }
 
 /** Archives the task; completed occurrences and their ledger entries remain for auditing. */
@@ -268,6 +335,7 @@ export const occurrenceRewardKey =(occurrenceId: string) => `occurrence:${occurr
 
 /** Completions of a task that fall inside the quota period containing `day`. */
 export function doneInPeriod(s: Snapshot, task: TaskDefinition, day: string): number {
+  if (task.window) return doneInWindow(s, task.id, task.window);
   if (!task.recurrence) return 0;
   const { start, end } = periodContaining(task.recurrence, task.dueAt, day);
   return s.occurrences.filter(
@@ -280,6 +348,12 @@ export function doneInPeriod(s: Snapshot, task: TaskDefinition, day: string): nu
  * current quota period (pass Infinity to skip the rest of the period).
  */
 function followUp(task: TaskDefinition, occ: TaskOccurrence, finishedOn: string, completed = 0): TaskOccurrence[] {
+  if (task.window) {
+    // Stays available (same day too) until the target is met; then the quest is finished.
+    if (!task.active || completed >= task.window.times) return [];
+    const scheduledFor = finishedOn > task.window.start ? finishedOn : task.window.start;
+    return [{ id: newId(), taskDefinitionId: task.id, scheduledFor, status: 'open' }];
+  }
   const rule = task.recurrence;
   if (!rule || !task.active) return [];
   const scheduledFor = isQuota(rule)
@@ -299,6 +373,10 @@ export function completeOccurrence(s: Snapshot, clock: Clock, occurrenceId: stri
   const now = clock.now().toISOString();
   const today = clock.today();
   const key = occurrenceRewardKey(occ.id);
+  if (task.window && today > task.window.end) {
+    throw new DomainError('invalid', 'This quest ended. Give it more time or delete it.');
+  }
+  if (task.window && today < task.window.start) throw new DomainError('invalid', 'This quest has not started yet.');
 
   const wallet: WalletTransaction[] = [];
   let rewardTransactionId: string | undefined;

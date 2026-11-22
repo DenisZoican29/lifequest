@@ -1,12 +1,13 @@
 import { View } from 'react-native';
 
-import { plural, repeatSummary, type RepeatValue } from '@/domain/repeat';
+import { isDates, plural, repeatSummary, type RepeatValue } from '@/domain/repeat';
 import type { RecurrenceFrequency } from '@/domain/types';
 
-import { Card, Chip, Field, Row, T } from './components';
+import { Card, Chip, Field, Row, Segmented, T } from './components';
+import { DateField } from './date-field';
 import { font, space, usePalette } from './theme';
 
-export { repeatFromRule, ruleFromRepeat, type RepeatValue } from '@/domain/repeat';
+export { repeatFromRule, ruleFromRepeat, windowFromRepeat, isDates, type RepeatValue } from '@/domain/repeat';
 
 const UNITS: RecurrenceFrequency[] = ['day', 'week', 'month', 'year'];
 
@@ -14,11 +15,16 @@ export function RepeatPicker({
   value,
   onChange,
   showAnchor = true,
+  start,
+  today,
 }: {
   value: RepeatValue;
   onChange: (v: RepeatValue) => void;
   /** Offer "after I complete it / fixed schedule" for once-per-period repeats. */
   showAnchor?: boolean;
+  /** Start date (the form's date field). Passing it with `today` offers "Between dates". */
+  start?: string;
+  today?: string;
 }) {
   const p = usePalette();
   const set = (patch: Partial<RepeatValue>) => onChange({ ...value, ...patch });
@@ -34,7 +40,38 @@ export function RepeatPicker({
         <Chip label="Custom" icon="options-outline" selected={v.mode === 'custom'} onPress={() => set({ mode: 'custom' })} />
       </Row>
 
-      {v.mode === 'custom' && (
+      {v.mode === 'custom' && start !== undefined && today !== undefined && (
+        <Segmented
+          value={v.span ?? 'repeat'}
+          onChange={(span) => set({ span })}
+          options={[
+            { value: 'repeat', label: 'Repeating' },
+            { value: 'dates', label: 'Between dates' },
+          ]}
+        />
+      )}
+
+      {isDates(v) && start !== undefined && today !== undefined && (
+        <Card>
+          <Row style={{ alignItems: 'flex-start' }}>
+            <View style={{ width: 72 }}>
+              <Field label="Times" value={v.times} onChangeText={(times) => set({ times })} numeric />
+            </View>
+            <T kind="body" style={{ marginTop: 34, flex: 1 }}>
+              {plural(v.times, 'time')} from the start date until
+            </T>
+          </Row>
+          <DateField label="End date" value={v.end ?? ''} onChange={(end) => set({ end })} today={today} />
+          <T kind="bodyStrong" color={p.forest}>
+            {repeatSummary(v, start)}
+          </T>
+          <T kind="small">
+            Log it on whatever days suit you, even several in one day. If the end date passes before you reach {v.times || 'N'}, it shows as not done, and you can give it more time or delete it.
+          </T>
+        </Card>
+      )}
+
+      {v.mode === 'custom' && !isDates(v) && (
         <Card>
           <Row style={{ alignItems: 'flex-start' }}>
             <View style={{ width: 72 }}>
@@ -77,7 +114,7 @@ export function RepeatPicker({
             <T kind="small">
               {v.unit === 'day' && v.every === '1'
                 ? `Tick it up to ${v.times || 'N'} times a day. It comes back tomorrow.`
-                : `Do it on any ${v.times || 'N'} days ${v.every === '1' ? `each ${v.unit}` : `in each ${v.every}-${v.unit} stretch`}. After each tick it's back the next day until you reach ${v.times || 'N'}, then it waits for the next ${v.every === '1' ? v.unit : `${v.every}-${v.unit} stretch`}.${v.unit === 'week' ? ' Weeks run Monday to Sunday.' : ''}`}
+                : `Do it ${v.times || 'N'} times ${v.every === '1' ? `each ${v.unit}` : `in each ${v.every}-${v.unit} stretch`}, on whatever days suit you, even several in one day. Once you reach ${v.times || 'N'}, it waits for the next ${v.every === '1' ? v.unit : `${v.every}-${v.unit} stretch`}.${v.unit === 'week' ? ' Weeks run Monday to Sunday.' : ''}`}
             </T>
           )}
         </Card>

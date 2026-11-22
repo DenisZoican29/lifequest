@@ -1,113 +1,131 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { Pressable, ScrollView, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { Pressable, View } from 'react-native';
 
-import { goalProgress, sortedMilestones } from '@/domain/selectors';
-import type { Cadence } from '@/domain/types';
-import { useStore } from '@/state/store';
-import { Button, Card, Chip, EmptyState, IconButton, Ionicons, ProgressBar, Row, Screen, ScreenHeader, SectionLabel, T } from '@/ui/components';
-import { MilestonePath } from '@/ui/milestone-path';
+import { goalInsights, type GoalInsights } from '@/domain/goal-insights';
+import type { Goal, GoalStatus } from '@/domain/types';
+import { useStore, useToday } from '@/state/store';
+import { Button, Card, EmptyState, IconButton, Ionicons, ProgressBar, Row, Screen, ScreenHeader, Segmented, StatusChip, T } from '@/ui/components';
+import { ConsistencyRing, WeekSpark } from '@/ui/goal-charts';
 import { font, space, usePalette } from '@/ui/theme';
-import { cadenceStyle } from '@/ui/visuals';
+import { deadlineWord, healthStyle } from '@/ui/visuals';
 
-const FILTERS: { value: Cadence | 'all' | 'archived'; label: string }[] = [
-  { value: 'all', label: 'All' },
-  { value: 'yearly', label: 'Yearly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'daily', label: 'Daily' },
+const VIEWS: { value: GoalStatus; label: string }[] = [
+  { value: 'active', label: 'Active' },
+  { value: 'completed', label: 'Reached' },
   { value: 'archived', label: 'Archived' },
 ];
 
-/** Roadmap: a featured goal and its milestone path (spec §06). */
+/** Roadmap: your end goals, each with a status driven by its linked quests (spec addendum A1). */
 export default function Roadmap() {
   const p = usePalette();
   const s = useStore((st) => st.snapshot);
-  const [filter, setFilter] = useState<Cadence | 'all' | 'archived'>('all');
-  const [picked, setPicked] = useState<string | null>(null);
+  const today = useToday();
+  const [view, setView] = useState<GoalStatus>('active');
 
-  const goals = s.goals
-    .filter((g) => (filter === 'archived' ? g.status === 'archived' : g.status !== 'archived'))
-    .filter((g) => filter === 'all' || filter === 'archived' || g.cadence === filter)
-    .sort((a, b) => (a.status === b.status ? (a.deadline ?? '9999').localeCompare(b.deadline ?? '9999') : a.status === 'active' ? -1 : 1));
-  const goal = goals.find((g) => g.id === picked) ?? goals[0];
+  const goals = useMemo(
+    () =>
+      s.goals
+        .filter((g) => g.status === view)
+        .sort((a, b) => (a.deadline ?? '9999').localeCompare(b.deadline ?? '9999') || a.title.localeCompare(b.title))
+        .map((g) => ({ goal: g, insights: goalInsights(s, g, today) })),
+    [s, view, today],
+  );
+  const unlinked = s.tasks.filter((t) => t.active && t.taskType === 'main' && !t.goalId).length;
 
   return (
     <Screen tabs>
       <ScreenHeader
         eyebrow="Your direction"
         title="My roadmap"
-        subtitle="Big plans, smaller steps."
+        subtitle="Big goals, small steps."
         right={<IconButton icon="add" label="New goal" onPress={() => router.push('/goal-form')} />}
       />
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space.sm }}>
-        {FILTERS.map((f) => (
-          <Chip key={f.value} label={f.label} selected={filter === f.value} onPress={() => setFilter(f.value)} />
-        ))}
-      </ScrollView>
+      <Segmented options={VIEWS} value={view} onChange={setView} />
 
-      {!goal ? (
-        <EmptyState
-          mood={filter === 'archived' ? 'sleepy' : 'happy'}
-          title={filter === 'archived' ? 'No archived goals' : 'Where would you like to go?'}
-          body={filter === 'archived' ? undefined : 'Start with one goal. We will break it into small checkpoints together.'}
-          action={filter !== 'archived' && <Button title="Create a goal" onPress={() => router.push('/goal-form')} />}
-        />
+      {goals.length === 0 ? (
+        view === 'active' ? (
+          <EmptyState
+            mood="happy"
+            title="Where would you like to go?"
+            body="Add an end goal with a deadline, like getting a new job, getting in better shape or cooking better. Then link quests to it and we'll show how you're doing."
+            action={<Button title="Create a goal" onPress={() => router.push('/goal-form')} />}
+          />
+        ) : (
+          <EmptyState mood="sleepy" title={view === 'completed' ? 'No goals reached yet' : 'No archived goals'} />
+        )
       ) : (
-        <>
-          {goals.length > 1 && (
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: space.sm }}>
-              {goals.map((g) => {
-                const on = g.id === goal.id;
-                return (
-                  <Pressable
-                    key={g.id}
-                    onPress={() => setPicked(g.id)}
-                    accessibilityRole="tab"
-                    accessibilityState={{ selected: on }}
-                    style={{ paddingHorizontal: 14, paddingVertical: 9, borderRadius: 999, borderWidth: 1, borderColor: on ? p.forest : p.border, backgroundColor: on ? p.surface : 'transparent' }}>
-                    <T kind="small" color={on ? p.forest : p.muted} style={on ? { fontFamily: font.bold } : undefined}>
-                      {g.title}
-                    </T>
-                  </Pressable>
-                );
-              })}
-            </ScrollView>
-          )}
+        <View style={{ gap: space.md }}>
+          {goals.map(({ goal, insights }) => (
+            <GoalCard key={goal.id} goal={goal} insights={insights} />
+          ))}
+        </View>
+      )}
 
-          <FeaturedGoal goalId={goal.id} />
-
-          <SectionLabel>Your milestone path</SectionLabel>
-          <MilestonePath goalId={goal.id} milestones={sortedMilestones(s, goal.id)} />
-        </>
+      {view === 'active' && unlinked > 0 && (
+        <Card tone="cream">
+          <Row gap={space.md} style={{ alignItems: 'flex-start' }}>
+            <Ionicons name="link-outline" size={20} color={p.forest} style={{ marginTop: 2 }} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <T kind="bodyStrong">
+                {unlinked} quest{unlinked === 1 ? ' is' : 's are'} not linked to a goal
+              </T>
+              <T kind="small">Open a quest and pick a goal, and it will count toward that goal’s status.</T>
+            </View>
+          </Row>
+          <Button compact kind="secondary" title="Go to quests" onPress={() => router.push('/quests')} />
+        </Card>
       )}
     </Screen>
   );
 }
 
-function FeaturedGoal({ goalId }: { goalId: string }) {
+function GoalCard({ goal, insights }: { goal: Goal; insights: GoalInsights }) {
   const p = usePalette();
-  const s = useStore((st) => st.snapshot);
-  const goal = s.goals.find((g) => g.id === goalId)!;
-  const progress = goalProgress(s, goal.id);
-  const cs = cadenceStyle(goal.cadence);
+  const hs = healthStyle(insights.health);
+  const linked = insights.quests.filter((q) => q.task.active).length;
+  const summary =
+    insights.consistency === null
+      ? hs.message
+      : `Kept ${Math.round(insights.consistency * 100)}% of your plan in the last 4 weeks.`;
   return (
-    <Pressable onPress={() => router.push({ pathname: '/goal/[id]', params: { id: goal.id } })} accessibilityRole="button" accessibilityLabel={`Open goal ${goal.title}`}>
-      <Card hero tone={cs.tone}>
-        <Row style={{ justifyContent: 'space-between' }}>
-          <T kind="eyebrow" color={p.ink}>
-            {goal.status === 'completed' ? 'Completed goal' : cs.label}
+    <Pressable onPress={() => router.push({ pathname: '/goal/[id]', params: { id: goal.id } })} accessibilityRole="button" accessibilityLabel={`${goal.title}. ${hs.label}. ${deadlineWord(insights.daysLeft)}.`}>
+      <Card style={{ gap: space.md }}>
+        <Row style={{ alignItems: 'flex-start' }}>
+          <T kind="h3" style={{ flex: 1 }} numberOfLines={2}>
+            {goal.title}
           </T>
-          <Ionicons name="chevron-forward" size={18} color={p.ink} />
+          <Ionicons name="chevron-forward" size={18} color={p.faint} style={{ marginTop: 3 }} />
         </Row>
-        <T kind="title">{goal.title}</T>
-        <View style={{ marginTop: space.xs, gap: 6 }}>
-          <ProgressBar ratio={progress.ratio} color={p.forestBright} track={p.surface} />
-          <T kind="meta" color={p.ink} style={{ alignSelf: 'flex-end', fontFamily: font.bold }}>
-            {progress.total ? `${Math.round(progress.ratio * 100)}% complete` : 'Add a milestone to track progress'}
-          </T>
-        </View>
+        <Row style={{ flexWrap: 'wrap' }}>
+          <StatusChip tone={hs.chip} icon={hs.icon} label={hs.label} />
+          <StatusChip tone={insights.daysLeft !== undefined && insights.daysLeft < 0 && goal.status === 'active' ? 'overdue' : 'neutral'} icon="flag-outline" label={deadlineWord(insights.daysLeft)} />
+        </Row>
+        <Row gap={space.md}>
+          <ConsistencyRing ratio={insights.consistency} size={56} stroke={7} />
+          <View style={{ flex: 1, gap: 2 }}>
+            <T kind="small" color={p.ink}>
+              {summary}
+            </T>
+            <T kind="meta">
+              {linked} quest{linked === 1 ? '' : 's'}
+              {insights.streak > 0 ? ` · ${insights.streak}-week streak` : ''}
+            </T>
+          </View>
+          <WeekSpark weeks={insights.weeks.slice(-8)} />
+        </Row>
+        {insights.timeUsed !== undefined && goal.status === 'active' && (
+          <View style={{ gap: 4 }}>
+            <ProgressBar ratio={insights.timeUsed} height={6} color={p.faint} />
+            <Row style={{ justifyContent: 'space-between' }}>
+              <T kind="meta">Time used</T>
+              <T kind="meta" style={{ fontFamily: font.bold }}>
+                {Math.round(insights.timeUsed * 100)}%
+              </T>
+            </Row>
+          </View>
+        )}
       </Card>
     </Pressable>
   );

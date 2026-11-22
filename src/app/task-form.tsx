@@ -21,7 +21,8 @@ import { useStore, useToday } from '@/state/store';
 import { Button, Card, Chip, ConfirmDialog, Field, Row, Screen, Segmented, StatusChip, T } from '@/ui/components';
 import { DateField } from '@/ui/date-field';
 import { quotaChip } from '@/ui/quest-row';
-import { RepeatPicker, repeatFromRule, ruleFromRepeat } from '@/ui/repeat-picker';
+import { NotDoneSheet } from '@/ui/not-done-sheet';
+import { isDates, RepeatPicker, repeatFromRule, ruleFromRepeat, windowFromRepeat } from '@/ui/repeat-picker';
 import { font, space, usePalette } from '@/ui/theme';
 import { toast } from '@/ui/toast';
 
@@ -36,8 +37,9 @@ export default function TaskForm() {
   const [taskType, setTaskType] = useState<TaskType>(existing?.taskType ?? params.type ?? 'main');
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
-  const [dueAt, setDueAt] = useState(existing ? nextDueOf(s, existing) : today);
-  const [repeat, setRepeat] = useState(() => repeatFromRule(existing?.recurrence));
+  const [dueAt, setDueAt] = useState(existing?.window ? existing.window.start : existing ? nextDueOf(s, existing) : today);
+  const [repeat, setRepeat] = useState(() => repeatFromRule(existing?.recurrence, existing?.window));
+  const [notDone, setNotDone] = useState(false);
   const [coins, setCoins] = useState(String(existing?.rewardCoins ?? 10));
   const [goalId, setGoalId] = useState<string | undefined>(existing?.goalId ?? params.goalId);
   const [reminder, setReminder] = useState<number | undefined>(existing?.reminderDaysBefore);
@@ -66,6 +68,7 @@ export default function TaskForm() {
       rewardCoins: coins.trim() === '' ? 0 : Number(coins),
       dueAt,
       recurrence: ruleFromRepeat(repeat),
+      window: windowFromRepeat(repeat, dueAt),
       reminderDaysBefore: isSide ? reminder : undefined,
     };
     setSaving(true);
@@ -119,7 +122,9 @@ export default function TaskForm() {
                 {quota ? (
                   <>
                     <StatusChip {...quotaChip(quota)} />
-                    {open.scheduledFor > today && <StatusChip tone="neutral" label={`Next ${formatFriendly(open.scheduledFor, today)}`} />}
+                    {open.scheduledFor > today && (
+                      <StatusChip tone="neutral" label={`${existing.window ? 'Starts' : 'Next'} ${formatFriendly(open.scheduledFor, today)}`} />
+                    )}
                   </>
                 ) : (
                   <StatusChip
@@ -128,36 +133,46 @@ export default function TaskForm() {
                   />
                 )}
               </Row>
-              <Button
-                title="Mark done"
-                icon="checkmark"
-                kind="secondary"
-                disabled={saving}
-                onPress={() =>
-                  act(
-                    (st, c) => completeOccurrence(st, c, open.id),
-                    existing.rewardCoins > 0 ? `Nice work! +${existing.rewardCoins} coins` : 'Nice work!',
-                    true,
-                  )
-                }
-              />
-              <Row style={{ flexWrap: 'wrap' }}>
-                {[1, 3, 7].map((d) => (
-                  <Chip
-                    key={d}
-                    icon="time-outline"
-                    label={d === 1 ? 'Tomorrow' : `In ${d} days`}
-                    onPress={() => act((st, c) => snoozeOccurrence(st, c, open.id, d), d === 1 ? 'Moved to tomorrow' : `Moved ${d} days ahead`, true)}
-                  />
-                ))}
-                {existing.recurrence && (
-                  <Chip
-                    icon="play-skip-forward-outline"
-                    label={quota ? `Skip rest of ${quota.periodLabel}` : 'Skip this time'}
-                    onPress={() => act((st, c) => skipOccurrence(st, c, open.id), quota ? 'Skipped until the next period' : 'Skipped · no coins', true)}
-                  />
-                )}
-              </Row>
+              {quota?.missed && (
+                <>
+                  <T kind="small">The end date passed before you reached {quota.times}.</T>
+                  <Button title="Give it more time or delete" icon="calendar-outline" onPress={() => setNotDone(true)} />
+                </>
+              )}
+              {!quota?.missed && !(existing.window && open.scheduledFor > today) && (
+                <Button
+                  title="Mark done"
+                  icon="checkmark"
+                  kind="secondary"
+                  disabled={saving}
+                  onPress={() =>
+                    act(
+                      (st, c) => completeOccurrence(st, c, open.id),
+                      existing.rewardCoins > 0 ? `Nice work! +${existing.rewardCoins} coins` : 'Nice work!',
+                      true,
+                    )
+                  }
+                />
+              )}
+              {!existing.window && (
+                <Row style={{ flexWrap: 'wrap' }}>
+                  {[1, 3, 7].map((d) => (
+                    <Chip
+                      key={d}
+                      icon="time-outline"
+                      label={d === 1 ? 'Tomorrow' : `In ${d} days`}
+                      onPress={() => act((st, c) => snoozeOccurrence(st, c, open.id, d), d === 1 ? 'Moved to tomorrow' : `Moved ${d} days ahead`, true)}
+                    />
+                  ))}
+                  {existing.recurrence && (
+                    <Chip
+                      icon="play-skip-forward-outline"
+                      label={quota ? `Skip rest of ${quota.periodLabel}` : 'Skip this time'}
+                      onPress={() => act((st, c) => skipOccurrence(st, c, open.id), quota ? 'Skipped until the next period' : 'Skipped · no coins', true)}
+                    />
+                  )}
+                </Row>
+              )}
             </>
           ) : (
             <>
@@ -188,10 +203,15 @@ export default function TaskForm() {
       <Field label="Title" value={title} onChangeText={setTitle} placeholder={isSide ? 'e.g. Clean the oven' : 'e.g. Study 30 minutes'} />
       <Field label="Description" value={description} onChangeText={setDescription} placeholder="Optional details" multiline />
 
-      <DateField label={existing ? 'Next due date' : repeat.mode === 'custom' && repeat.times !== '1' ? 'Start date' : 'Due date'} value={dueAt} onChange={setDueAt} today={today} />
+      <DateField
+        label={isDates(repeat) ? 'Start date' : existing ? 'Next due date' : repeat.mode === 'custom' && repeat.times !== '1' ? 'Start date' : 'Due date'}
+        value={dueAt}
+        onChange={setDueAt}
+        today={today}
+      />
 
       <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>Repeat</T>
-      <RepeatPicker value={repeat} onChange={setRepeat} />
+      <RepeatPicker value={repeat} onChange={setRepeat} start={dueAt} today={today} />
 
       <View style={{ marginTop: space.md }}>
         <Field label="Coin reward" value={coins} onChangeText={setCoins} numeric hint={isSide ? 'Optional for side quests — 0 is fine.' : 'Paid once per completed occurrence.'} />
@@ -241,6 +261,7 @@ export default function TaskForm() {
         onConfirm={archive}
         onCancel={() => setConfirmArchive(false)}
       />
+      {notDone && existing && <NotDoneSheet task={existing} onClose={() => setNotDone(false)} />}
     </Screen>
   );
 }

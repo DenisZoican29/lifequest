@@ -2,20 +2,12 @@ import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
 
 import { createGoal, updateGoal, type GoalInput } from '@/domain/commands';
-import type { Cadence } from '@/domain/types';
 import { useStore, useToday } from '@/state/store';
-import { Button, Chip, Field, Row, Screen, T } from '@/ui/components';
+import { Button, Field, Screen, T } from '@/ui/components';
 import { DateField } from '@/ui/date-field';
-import { space } from '@/ui/theme';
 import { toast } from '@/ui/toast';
 
-const CADENCES: { value: Cadence; label: string; hint: string }[] = [
-  { value: 'daily', label: 'Daily', hint: 'Habits you work on every day' },
-  { value: 'weekly', label: 'Weekly', hint: 'Short sprints' },
-  { value: 'monthly', label: 'Monthly', hint: 'Medium-term targets' },
-  { value: 'yearly', label: 'Yearly', hint: 'Big ambitions' },
-];
-
+/** An end goal: what you want to reach, why, and by when. Quests linked to it drive its status. */
 export default function GoalForm() {
   const { id } = useLocalSearchParams<{ id?: string }>();
   const s = useStore((st) => st.snapshot);
@@ -25,35 +17,36 @@ export default function GoalForm() {
 
   const [title, setTitle] = useState(existing?.title ?? '');
   const [description, setDescription] = useState(existing?.description ?? '');
-  const [cadence, setCadence] = useState<Cadence>(existing?.cadence ?? 'monthly');
   const [deadline, setDeadline] = useState(existing?.deadline ?? '');
   const [saving, setSaving] = useState(false);
 
   const save = async () => {
     if (saving) return;
-    const input: GoalInput = { title, description, cadence, deadline: deadline || undefined };
+    const input: GoalInput = { title, description, deadline };
     setSaving(true);
     const res = await run((st, c) => (existing ? updateGoal(st, c, existing.id, input) : createGoal(st, c, input)));
     setSaving(false);
     if (!res.ok) return toast(res.message, 'error');
-    toast(existing ? 'Goal updated' : 'Goal created');
-    router.back();
+    if (existing) {
+      toast('Goal updated');
+      return router.back();
+    }
+    toast('Goal created. Now link a quest to it.');
+    const created = useStore.getState().snapshot.goals.find((g) => !s.goals.some((old) => old.id === g.id));
+    if (created) router.replace({ pathname: '/goal/[id]', params: { id: created.id } });
+    else router.back();
   };
 
   return (
     <Screen edges={['bottom']}>
       <Stack.Screen options={{ title: existing ? 'Edit goal' : 'New goal' }} />
-      <Field label="Title" value={title} onChangeText={setTitle} placeholder="e.g. Run a half marathon" />
-      <Field label="Description" value={description} onChangeText={setDescription} placeholder="Why it matters, what done looks like" multiline />
-      <T kind="small">Cadence</T>
-      <Row style={{ flexWrap: 'wrap' }}>
-        {CADENCES.map((c) => (
-          <Chip key={c.value} label={c.label} selected={cadence === c.value} onPress={() => setCadence(c.value)} />
-        ))}
-      </Row>
-      <T kind="small" style={{ marginBottom: space.md }}>{CADENCES.find((c) => c.value === cadence)?.hint}</T>
-      <DateField label="Deadline" value={deadline} onChange={setDeadline} today={today} optional />
-      <Button title={saving ? 'Saving…' : existing ? 'Save changes' : 'Create goal'} onPress={save} disabled={saving} />
+      <T kind="small">
+        Something you want to reach, like getting a new job, getting in better shape or cooking better. You will link quests to it next.
+      </T>
+      <Field label="Goal" value={title} onChangeText={setTitle} placeholder="e.g. Get a new job" />
+      <Field label="Why it matters (optional)" value={description} onChangeText={setDescription} placeholder="What does done look like?" multiline />
+      <DateField label="Deadline" value={deadline} onChange={setDeadline} today={today} horizon="far" />
+      <Button title={saving ? 'Saving…' : existing ? 'Save changes' : 'Create goal'} onPress={save} disabled={saving || !title.trim() || !deadline} />
     </Screen>
   );
 }

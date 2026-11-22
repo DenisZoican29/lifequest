@@ -47,17 +47,14 @@ export function periodContaining(rule: RecurrenceRule, anchor: LocalDate, date: 
 
 /**
  * Where a quota quest goes after one is completed on `finishedOn`, given how many are now done
- * in that period. It comes back tomorrow (or later today for one-day periods) until the target
- * is met, then waits for the next period. Missed ones are not carried over.
+ * in that period. It stays available the same day (log as many as you like, e.g. two gym
+ * sessions in one day) until the target is met, then waits for the next period.
+ * Missed ones are not carried over.
  */
 export function nextQuotaDate(rule: RecurrenceRule, anchor: LocalDate, finishedOn: LocalDate, doneInPeriod: number): LocalDate {
   const period = periodContaining(rule, anchor, finishedOn);
-  const nextPeriod = addPeriod(period.end, 'day', 1);
-  if (doneInPeriod >= (rule.timesPerPeriod ?? 1)) return nextPeriod;
-  const sameDayAllowed = rule.frequency === 'day' && Math.floor(rule.interval) <= 1;
-  if (sameDayAllowed) return finishedOn;
-  const tomorrow = addPeriod(finishedOn, 'day', 1);
-  return tomorrow <= period.end ? tomorrow : nextPeriod;
+  if (doneInPeriod >= (rule.timesPerPeriod ?? 1)) return addPeriod(period.end, 'day', 1);
+  return finishedOn;
 }
 
 /**

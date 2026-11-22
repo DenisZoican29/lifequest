@@ -12,19 +12,30 @@ export function DateField({
   onChange,
   today,
   optional,
+  horizon = 'near',
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   today: string;
   optional?: boolean;
+  /** `far` offers months-ahead shortcuts, for goal deadlines. */
+  horizon?: 'near' | 'far';
 }) {
-  const quick = [
-    { label: 'Today', v: today },
-    { label: 'Tomorrow', v: addPeriod(today, 'day', 1) },
-    { label: '+1 week', v: addPeriod(today, 'week', 1) },
-    { label: '+1 month', v: addPeriod(today, 'month', 1) },
-  ];
+  const quick =
+    horizon === 'far'
+      ? [
+          { label: 'In 1 month', v: addPeriod(today, 'month', 1) },
+          { label: 'In 3 months', v: addPeriod(today, 'month', 3) },
+          { label: 'In 6 months', v: addPeriod(today, 'month', 6) },
+          { label: 'In 1 year', v: addPeriod(today, 'year', 1) },
+        ]
+      : [
+          { label: 'Today', v: today },
+          { label: 'Tomorrow', v: addPeriod(today, 'day', 1) },
+          { label: '+1 week', v: addPeriod(today, 'week', 1) },
+          { label: '+1 month', v: addPeriod(today, 'month', 1) },
+        ];
   const invalid = value !== '' && !isLocalDate(value);
   return (
     <View>

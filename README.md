@@ -23,13 +23,23 @@ Every push to `master` runs `.github/workflows/deploy.yml`: tests, `expo export 
 `app.json` sets `experiments.baseUrl` to `/lifequest`. This setting only affects the export; `npm run web` still serves from `/`.
 Data lives in each browser's IndexedDB, so the live site, localhost and your phone each keep separate quests.
 
+## Goals and the roadmap
+
+See [`docs/spec-goals-roadmap.md`](docs/spec-goals-roadmap.md) (spec addendum A1).
+
+- **Goals are end goals with a deadline**, like *Get a new job*, *Get in better shape* or *Be better at cooking*. Create one with **+** on the Roadmap. Goals no longer have a daily/weekly/monthly/yearly cadence.
+- **Link quests to a goal** with the quest's **Goal** field, or **+ Quest** on the goal page.
+- **Status** comes from how well the linked quests are kept over the last 4 weeks: *On track* (≥ 80% of the plan), *Needs a push* (50–80%), *Falling behind* (< 50%). It shows *Getting started* during the first week and *Deadline passed* after the deadline.
+- **The goal page** shows a week streak, quests done, days you showed up, coins earned, a week-by-week chart, a day-by-day activity grid and how each linked quest is going. Milestones remain as optional checkpoints.
+
 ## Managing quests
 
 - **Add:** use **+ Add quest** or **+ Add side quest** on the Quests tab, or **+ Quest** on a goal.
 - **Change status:** tap a quest to open it. The **Status** card offers *Mark done*, move to *Tomorrow / In 3 days / In 7 days*, *Skip this time* (repeating quests) and *Archive*.
 - **Repeat:** choose **Every day**, **Just once** or **Custom**. Custom asks *how many times* and *every how many days, weeks, months or years*, for example *3 times every 1 week*. The same picker is used in setup and in the quest form.
   - **1 time per period** works like a regular repeat. Choose whether the next one is due *after I complete it* or *on a fixed schedule*.
-  - **2 or more times per period** makes a target. Weeks run Monday to Sunday and months start on the 1st. Every tick pays the reward. The quest comes back the next day until the target is met, then waits for the next period; for one-day periods it comes back the same day. Missed sessions are not carried over and it never shows as overdue. The row shows *1 of 3 this week*, or *2 to go · 1 day left* when you're behind (no warning in a partial first week). *Skip rest of this week* jumps to the next period.
+  - **2 or more times per period** makes a target. Weeks run Monday to Sunday and months start on the 1st. Every tick pays the reward. You can log several on the same day; once the target is met it waits for the next period. Missed sessions are not carried over and it never shows as overdue. The row shows *1 of 3 this week*, or *2 to go · 1 day left* when you're behind (no warning in a partial first week). *Skip rest of this week* jumps to the next period.
+- **Between dates:** Custom → **Between dates** sets *N times between a start and an end date* (e.g. 4 times from 20 Nov to 1 Dec). Log it like a times-per-week quest. If the end date passes before you reach N, it shows **Not done**; tap it to **give it more time** (progress kept) or **delete** it. See [`docs/spec-date-range-quests.md`](docs/spec-date-range-quests.md).
 - **Logging multi-time quests:** quests with 2+ times per period show a counter badge (*1/3*) instead of a checkbox. **Swipe the row to the right** past about half its width to log +1; it says *Release to log* once you're far enough. Drag back or let go early to cancel, and a tap still opens the editor. Screen readers get a "Log one" action instead of the swipe. Repeated logs collapse into a single row in the lists.
 - **Archived:** archived quests are listed under **Archived (N)** at the bottom of the Quests tab. Open one and press **Restore quest** to make it due again today.
 
@@ -42,7 +52,7 @@ npm run lint
 ## Try the acceptance flow (spec §7)
 
 1. Onboarding: choose apps and a daily allowance.
-2. Roadmap → **New goal** → open it → add milestones → **+ Quest** linked to the goal.
+2. Roadmap → **+** → name a goal and pick a deadline. It opens the goal page → **Add a quest**.
 3. Tick the quest. Coins are credited once, however often you click.
 4. Bank → Demo screen time → use **+15 min** on the sample apps until they show *Paused*.
 5. Bank → Buy extra time → confirm. Coins are debited and the apps reopen.
@@ -59,7 +69,8 @@ src/domain/        Pure TypeScript — no React, no storage
   commands.ts      (snapshot, clock, input) -> ChangeSet   ← all business rules live here
   economy.ts       coin balance, shared daily allowance
   recurrence.ts    next due date (after-completion or fixed calendar)
-  selectors.ts     today/upcoming/side/history lists, goal progress
+  selectors.ts     today/upcoming/side/history lists, checkpoint progress
+  goal-insights.ts goal status, consistency, streaks and chart data from linked quests
   dates.ts         Clock abstraction (simulated day offset)
 src/data/          Repository interface; Dexie/IndexedDB adapter (web), expo-sqlite adapter (iPhone/Android)
 src/platform/      AppBlocker interface + WebMockAppBlocker (iOS/Android adapters plug in here)
@@ -95,7 +106,7 @@ double purchases even when the UI is working from stale data (spec FR-16).
 | Overdue | Stays visible ("A little behind schedule"). Paid once when completed. Side quests can be snoozed 3 days or rescheduled |
 | Unchecking a completed quest | Not supported. Completions are final, which keeps the ledger simple |
 | Deselecting an app | Minutes it already used today still count. Time is never refunded |
-| Goal progress | Equal weight: milestones + linked one-off quests. Repeating quests are excluded |
+| Goal progress | Status from how well linked quests are kept over the last 4 weeks; each quest weighs the same (spec addendum A1). Milestones are optional checkpoints |
 | Sub-goals | Not built. Milestones only (the spec's `parentGoalId` is omitted) |
 | Reminders | In-app badge N days before a side quest is due. No OS push in the browser |
 

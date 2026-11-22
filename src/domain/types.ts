@@ -7,14 +7,18 @@ export type ISODateTime = string;
 /** Local calendar date, `YYYY-MM-DD`. */
 export type LocalDate = string;
 
+/** Legacy (v0.1): goals used to pick a cadence. Kept so old records still load; no longer set. */
 export type Cadence = 'daily' | 'weekly' | 'monthly' | 'yearly';
 export type GoalStatus = 'active' | 'completed' | 'archived';
 
 export interface Goal {
   id: string;
   title: string;
+  /** Why it matters / what done looks like. */
   description: string;
-  cadence: Cadence;
+  /** Legacy, see `Cadence`. */
+  cadence?: Cadence;
+  /** Required for new goals; goals from v0.1 may not have one. */
   deadline?: LocalDate;
   status: GoalStatus;
   createdAt: ISODateTime;
@@ -50,6 +54,16 @@ export interface RecurrenceRule {
 
 export type TaskType = 'main' | 'side';
 
+/**
+ * "N times between two dates" (e.g. 4 times from 20 Nov to 1 Dec). Used instead of `recurrence`.
+ * Once `end` passes without reaching `times`, the quest is "not done" until it is rescheduled or deleted.
+ */
+export interface TargetWindow {
+  start: LocalDate;
+  end: LocalDate;
+  times: number;
+}
+
 export interface TaskDefinition {
   id: string;
   title: string;
@@ -58,6 +72,8 @@ export interface TaskDefinition {
   goalId?: string;
   rewardCoins: number;
   recurrence?: RecurrenceRule;
+  /** Set for date-range quests; `recurrence` is then unset and `dueAt` equals `window.start`. */
+  window?: TargetWindow;
   /** First due date. */
   dueAt: LocalDate;
   /** Side quests: show a reminder this many days before the due date (in-app only in the POC). */

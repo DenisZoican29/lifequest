@@ -1,6 +1,10 @@
-import type { Cadence, RecurrenceRule, Snapshot, TaskDefinition } from '@/domain/types';
+import { format } from 'date-fns';
 
-import type { CardTone, IconName } from './components';
+import { fromLocalDate } from '@/domain/dates';
+import type { GoalHealth } from '@/domain/goal-insights';
+import type { RecurrenceRule, Snapshot, TaskDefinition } from '@/domain/types';
+
+import type { CardTone, ChipTone, IconName } from './components';
 
 const WORDS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
 const word = (n: number) => WORDS[n] ?? String(n);
@@ -16,12 +20,20 @@ export function recurrenceWord(rule: RecurrenceRule | undefined): string {
   return `Every ${rule.interval} ${rule.frequency}s`;
 }
 
+/** "4× by 1 Dec" for date-range quests, otherwise the repeat word. */
+export function taskRepeatWord(task: TaskDefinition): string {
+  if (task.window) return `${task.window.times}× by ${format(fromLocalDate(task.window.end), 'd MMM')}`;
+  return recurrenceWord(task.recurrence);
+}
+
 /** Row meta line: "Daily quest · Run a half marathon" (spec §03 task cards). */
 export function questContext(s: Snapshot, task: TaskDefinition): string {
   const kind =
     task.taskType === 'side'
       ? 'Side quest'
-      : task.recurrence?.timesPerPeriod
+      : task.window
+        ? `Quest · ${taskRepeatWord(task)}`
+        : task.recurrence?.timesPerPeriod
         ? `Quest · ${recurrenceWord(task.recurrence)}`
         : `${recurrenceWord(task.recurrence)} quest`;
   const goal = task.goalId ? s.goals.find((g) => g.id === task.goalId)?.title : undefined;
@@ -36,14 +48,70 @@ export function seeYouAgain(rule: RecurrenceRule | undefined): string {
   return `see you in ${rule.interval === 1 ? 'a' : word(rule.interval)} ${unit}`;
 }
 
-/** Card tint and icon per goal cadence. */
-export function cadenceStyle(c: Cadence): { tone: CardTone; icon: IconName; label: string } {
-  return {
-    yearly: { tone: 'lavender' as CardTone, icon: 'trophy-outline' as IconName, label: 'Yearly goal' },
-    monthly: { tone: 'sky' as CardTone, icon: 'calendar-outline' as IconName, label: 'Monthly goal' },
-    weekly: { tone: 'mint' as CardTone, icon: 'leaf-outline' as IconName, label: 'Weekly goal' },
-    daily: { tone: 'peach' as CardTone, icon: 'sunny-outline' as IconName, label: 'Daily goal' },
-  }[c];
+/**
+ * Goal status: label, colours and a calm one-line message (design spec: "a cozy quest journal,
+ * not a punishment app"). Colour always comes with an icon and words.
+ */
+export interface HealthStyle {
+  label: string;
+  chip: ChipTone;
+  card: CardTone;
+  icon: IconName;
+  message: string;
+}
+
+export function healthStyle(h: GoalHealth): HealthStyle {
+  return HEALTH[h];
+}
+
+const HEALTH: Record<GoalHealth, HealthStyle> = {
+  'on-track': { label: 'On track', chip: 'done', card: 'mint', icon: 'trending-up', message: 'You are keeping your plan. Keep the rhythm going.' },
+  'needs-push': {
+    label: 'Needs a push',
+    chip: 'due',
+    card: 'peach',
+    icon: 'walk-outline',
+    message: 'A little behind your plan. One extra session this week gets you back.',
+  },
+  'falling-behind': {
+    label: 'Falling behind',
+    chip: 'overdue',
+    card: 'rose',
+    icon: 'leaf-outline',
+    message: 'This goal needs some love. Try a smaller, easier quest to get moving again.',
+  },
+  'getting-started': {
+    label: 'Getting started',
+    chip: 'demo',
+    card: 'sky',
+    icon: 'sparkles-outline',
+    message: 'Your status shows up once your quests have run for about a week.',
+  },
+  'no-quests': {
+    label: 'No quests yet',
+    chip: 'neutral',
+    card: 'cream',
+    icon: 'add-circle-outline',
+    message: 'Link a quest to this goal so we can show how you are doing.',
+  },
+  'past-deadline': {
+    label: 'Deadline passed',
+    chip: 'overdue',
+    card: 'cream',
+    icon: 'time-outline',
+    message: 'The deadline has passed. Mark the goal reached, or give it a new date.',
+  },
+  completed: { label: 'Reached', chip: 'done', card: 'mint', icon: 'trophy-outline', message: 'Goal reached. What a journey!' },
+  archived: { label: 'Archived', chip: 'neutral', card: 'cream', icon: 'archive-outline', message: 'This goal is archived.' },
+};
+
+/** "86 days left", "Due today", "12 days past the deadline". */
+export function deadlineWord(daysLeft: number | undefined): string {
+  if (daysLeft === undefined) return 'No deadline';
+  if (daysLeft === 0) return 'Due today';
+  if (daysLeft === 1) return '1 day left';
+  if (daysLeft > 1) return `${daysLeft} days left`;
+  return `${-daysLeft} day${daysLeft === -1 ? '' : 's'} past the deadline`;
 }
 
 const BRANDS: Record<string, { icon: IconName; bg: string }> = {

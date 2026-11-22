@@ -152,19 +152,18 @@ describe('times per period', () => {
     expect(periodContaining(fortnight, '2026-11-18', '2026-12-03')).toEqual({ start: '2026-11-30', end: '2026-12-13' });
   });
 
-  it('3 times per week: comes back tomorrow until done, then next Monday, paying each time', () => {
+  it('3 times per week: loggable again the same day until done, then next Monday, paying each time', () => {
     const w = world();
     addGym(w);
     expect(questsDueToday(w.s, w.clock.today())[0].quota).toMatchObject({ done: 0, times: 3, daysLeft: 7, periodLabel: 'this week' });
     tickToday(w);
-    expect(questsDueToday(w.s, w.clock.today())).toHaveLength(0);
-    expect(questsUpcoming(w.s, w.clock.today())[0].occurrence.scheduledFor).toBe('2026-11-17');
-    w.run((s, c) => shiftDays(s, c, 2)); // Wednesday: skipped Tuesday, still due
+    expect(questsDueToday(w.s, w.clock.today())[0]).toMatchObject({ overdue: false, quota: { done: 1, daysLeft: 7 } });
+    w.run((s, c) => shiftDays(s, c, 2)); // Wednesday: still open, not overdue
     expect(questsDueToday(w.s, w.clock.today())[0]).toMatchObject({ overdue: false, quota: { done: 1, daysLeft: 5 } });
     tickToday(w);
-    w.run((s, c) => shiftDays(s, c, 1));
-    tickToday(w);
+    tickToday(w); // two sessions on the same day both count
     expect(coinBalance(w.s.wallet)).toBe(30);
+    expect(questsDueToday(w.s, w.clock.today())).toHaveLength(0);
     const next = w.s.occurrences.find((o) => o.status === 'open')!;
     expect(next.scheduledFor).toBe('2026-11-23');
     expect(questsUpcoming(w.s, w.clock.today())[0].quota).toMatchObject({ done: 3, times: 3 });
@@ -226,7 +225,7 @@ describe('times per period', () => {
 describe('roadmap', () => {
   it('T-02: progress counts milestones and linked one-off tasks', () => {
     const w = world();
-    w.run((s, c) => createGoal(s, c, { title: 'Run a half marathon', description: '', cadence: 'yearly' }));
+    w.run((s, c) => createGoal(s, c, { title: 'Run a half marathon', description: '', deadline: '2027-06-30' }));
     const goalId = w.s.goals[0].id;
     w.run((s, c) => addMilestone(s, c, goalId, 'Run 5k'));
     w.run((s, c) => addMilestone(s, c, goalId, 'Run 10k'));
@@ -252,7 +251,7 @@ describe('roadmap', () => {
 
   it('side quests cannot be linked to goals', () => {
     const w = world();
-    w.run((s, c) => createGoal(s, c, { title: 'G', description: '', cadence: 'weekly' }));
+    w.run((s, c) => createGoal(s, c, { title: 'G', description: '', deadline: '2026-12-31' }));
     expect(() =>
       createTask(w.s, w.clock, { title: 'Oil', description: '', taskType: 'side', goalId: w.s.goals[0].id, rewardCoins: 0, dueAt: '2026-12-01' }),
     ).toThrow(/Side quests/);
