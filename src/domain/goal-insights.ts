@@ -57,6 +57,12 @@ export interface QuestStanding {
   ratio: number | null;
 }
 
+export interface QuestCompletions {
+  task: TaskDefinition;
+  totalDone: number;
+  recentDone: number;
+}
+
 export interface WeekStanding {
   /** Monday. */
   start: LocalDate;
@@ -80,6 +86,7 @@ export interface GoalInsights {
   /** 0..1 over the last four weeks, or null before anything was due. */
   consistency: number | null;
   quests: QuestStanding[];
+  questCompletions: QuestCompletions[];
   /** Oldest first; the last entry is the current week. From the first week (at least MIN_WEEKS, at most HISTORY_WEEKS). */
   weeks: WeekStanding[];
   /** HISTORY_WEEKS × 7 days, Monday-aligned, oldest first. */
@@ -136,7 +143,7 @@ export function questPeriods(task: TaskDefinition, completions: LocalDate[], tod
   if (!task.recurrence) {
     const c = completions[0];
     if (c) return [{ start: activeFrom, end: task.dueAt, target: 1, done: 1, kept: 1, on: c }];
-    if (task.active && task.dueAt < today && task.dueAt <= end) {
+    if (task.active && !task.noDueDate && task.dueAt < today && task.dueAt <= end) {
       return [{ start: activeFrom, end: task.dueAt, target: 1, done: 0, kept: 0, on: task.dueAt }];
     }
     return [];
@@ -206,6 +213,7 @@ export function goalInsights(s: Snapshot, goal: Goal, today: LocalDate): GoalIns
   const done = occ.filter((o) => o.status === 'completed' && o.completedOn && o.completedOn <= end);
 
   const winStart = addPeriod(end, 'day', -(WINDOW_DAYS - 1));
+  const recentStart = addPeriod(today, 'day', -(WINDOW_DAYS - 1));
   const per = tasks.map((task) => {
     const completions = done
       .filter((o) => o.taskDefinitionId === task.id)
@@ -214,10 +222,20 @@ export function goalInsights(s: Snapshot, goal: Goal, today: LocalDate): GoalIns
     const periods = questPeriods(task, completions, today, end);
     let recent = periods.filter((p) => p.on >= winStart);
     if (!recent.length && periods.length && isLongRule(task)) recent = periods.slice(-1);
-    return { task, periods, recent, firstDay: periods[0]?.start ?? completions[0] };
+    return {
+      task,
+      periods,
+      recent,
+      totalDone: completions.length,
+      recentDone: completions.filter((date) => date >= recentStart).length,
+      firstDay: periods[0]?.start ?? completions[0],
+    };
   });
 
   const quests = per.filter((q) => q.task.active || q.periods.length).map((q) => standing(q.task, q.recent));
+  const questCompletions = per
+    .filter((q) => q.task.active || q.totalDone > 0)
+    .map(({ task, totalDone, recentDone }) => ({ task, totalDone, recentDone }));
   const consistency = mean(quests.flatMap((q) => (q.ratio === null ? [] : [q.ratio])));
 
   // Weeks: every week since the goal began (for streaks), the last HISTORY_WEEKS for the chart.
@@ -269,6 +287,7 @@ export function goalInsights(s: Snapshot, goal: Goal, today: LocalDate): GoalIns
     health: healthOf(goal, today, consistency, hasQuests, settled),
     consistency,
     quests,
+    questCompletions,
     weeks,
     days,
     streak,

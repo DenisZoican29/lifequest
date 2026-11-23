@@ -1,161 +1,146 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, View } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 
-import { daysBetween } from '@/domain/dates';
-import { collapseQuota, questsCompleted, questsDueToday, questsUpcoming, sideQuests, type QuestItem } from '@/domain/selectors';
+import { questLibrary, sideQuestWarning, type LibraryFilter, type QuestItem } from '@/domain/selectors';
 import { useStore, useToday } from '@/state/store';
-import { Button, Card, EmptyState, Ionicons, ProgressBar, Screen, ScreenHeader, SectionLabel, Segmented, T } from '@/ui/components';
-import { QuestRow, SideQuestCard } from '@/ui/quest-row';
-import { radius, space, usePalette } from '@/ui/theme';
-import type { TaskType } from '@/domain/types';
+import { Button, EmptyState, Ionicons, Screen, ScreenHeader, SearchField, SectionLabel, T, UnderlineTabs } from '@/ui/components';
+import { QuestListCard, QuestRows } from '@/ui/quest-row';
+import { space, usePalette } from '@/ui/theme';
 
-type Tab = 'daily' | 'weekly' | 'side';
+/** Deep links: ?view=side opens Side quests; anything else (old today/week/daily/weekly links too) opens All. */
+const toFilter = (v?: string): LibraryFilter | undefined => (v === 'side' || v === 'main' ? v : v ? 'all' : undefined);
 
+/**
+ * Quests library (addendum A4 §2): every quest, one row each, opening on **All**. **Main quests**
+ * and **Side quests** filter by type, and **Find a quest** searches titles and linked goals.
+ * Active quests come first; finished one-time quests and archived ones sit in collapsed sections.
+ * Today holds the daily list and that day's activity.
+ */
 export default function Quests() {
   const p = usePalette();
-  const params = useLocalSearchParams<{ view?: Tab }>();
-  const [tab, setTab] = useState<Tab>(params.view ?? 'daily');
+  const params = useLocalSearchParams<{ view?: string }>();
+  const [filter, setFilter] = useState<LibraryFilter>(toFilter(params.view) ?? 'all');
   const [lastParam, setLastParam] = useState(params.view);
   if (params.view !== lastParam) {
     // Follow deep links like /quests?view=side.
     setLastParam(params.view);
-    if (params.view) setTab(params.view);
+    const v = toFilter(params.view);
+    if (v) setFilter(v);
   }
-  const [showHistory, setShowHistory] = useState(false);
+  const [query, setQuery] = useState('');
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   const s = useStore((st) => st.snapshot);
   const today = useToday();
-  const ago = (i: QuestItem) => daysBetween(i.occurrence.completedOn ?? today, today);
-
-  const completedMain = questsCompleted(s, today, 'main');
-  const daily = collapseQuota([...questsDueToday(s, today), ...completedMain.filter((i) => i.occurrence.completedOn === today)]);
-  const upcoming = questsUpcoming(s, today);
-  const weekly = collapseQuota([...upcoming.filter((i) => i.dueInDays <= 7), ...completedMain.filter((i) => ago(i) > 0 && ago(i) < 7)]);
-  const later = upcoming.filter((i) => i.dueInDays > 7);
-  const sideOpen = sideQuests(s, today);
-  const sideDone = questsCompleted(s, today, 'side').filter((i) => ago(i) <= 30);
-  const dueSoon = sideOpen.filter((i) => i.overdue || i.dueInDays <= 7 || i.reminderActive).length;
-
-  const isSide = tab === 'side';
-  const list = tab === 'daily' ? daily : weekly;
-  const doneCount = list.filter((i) => i.occurrence.status === 'completed').length;
+  const library = questLibrary(s, today, filter, query);
+  const total = library.active.length + library.completed.length + library.archived.length;
+  const searching = query.trim() !== '';
+  const hasAny = s.tasks.some((t) => filter === 'all' || t.taskType === filter);
+  const warning = sideQuestWarning(s, today);
+  const warningLabel = warning.level === 'overdue'
+    ? `${warning.overdue} overdue`
+    : warning.level === 'soon' ? `${warning.soon} due soon` : undefined;
+  const isSide = filter === 'side';
+  const addQuest = () => router.push(isSide ? { pathname: '/task-form', params: { type: 'side' } } : '/task-form');
+  const kind = filter === 'side' ? 'side quests' : filter === 'main' ? 'main quests' : 'quests';
 
   return (
     <Screen tabs>
       <ScreenHeader
-        eyebrow={isSide ? 'Housekeeping hero' : 'Keep going'}
-        title={isSide ? 'Side quests' : 'Your quests'}
-        subtitle={isSide ? 'Small responsibilities, handled.' : 'Choose what to do next.'}
+        title="Quests"
+        right={<Button compact icon="add" title={isSide ? 'Add side quest' : 'Add quest'} onPress={addQuest} />}
       />
-      <Segmented
-        value={tab}
-        onChange={setTab}
+      <UnderlineTabs
+        label="Quest type"
+        value={filter}
+        onChange={setFilter}
+        fit
         options={[
-          { value: 'daily', label: 'Daily' },
-          { value: 'weekly', label: 'Weekly' },
-          { value: 'side', label: 'Side quests', count: sideOpen.filter((i) => i.overdue).length },
+          { value: 'all', label: 'All' },
+          { value: 'main', label: 'Main quests' },
+          {
+            value: 'side',
+            label: 'Side quests',
+            accessibilityLabel: warningLabel ? `Side quests, ${warningLabel}` : undefined,
+            trailing: warning.level && <Ionicons name="warning" size={16} color={warning.level === 'overdue' ? p.roseInk : p.goldInk} aria-hidden />,
+          },
         ]}
       />
+      {hasAny && <SearchField label="Find a quest" value={query} onChangeText={setQuery} />}
 
-      {isSide ? (
-        <>
-          <Card hero tone="peach">
-            <T kind="eyebrow" color={p.ink}>
-              Up next
-            </T>
-            <T kind="title">{dueSoon === 0 ? 'Nothing due soon' : `${dueSoon} task${dueSoon > 1 ? 's' : ''} due soon`}</T>
-            <T kind="small" color={p.ink}>
-              We will keep track of the rest.
-            </T>
-          </Card>
-          {sideOpen.length === 0 && sideDone.length === 0 ? (
-            <EmptyState mood="happy" title="No side quests yet" body="Add chores and upkeep, like cleaning the oven or changing the car oil. They never count toward your roadmap." />
-          ) : (
-            <View style={{ gap: space.md }}>
-              {collapseQuota([...sideOpen, ...sideDone.slice(0, 5)]).map((item) => (
-                <SideQuestCard key={item.occurrence.id} item={item} today={today} />
-              ))}
-            </View>
-          )}
-          <Button title="+ Add side quest" onPress={() => router.push({ pathname: '/task-form', params: { type: 'side' } })} />
-          <ArchivedQuests type="side" />
-        </>
+      {!hasAny ? (
+        <EmptyState
+          mood="happy"
+          title={isSide ? 'No side quests yet' : 'No quests yet'}
+          body={isSide
+            ? 'Add chores and upkeep, like cleaning the oven or changing the car oil. They never count toward your roadmap.'
+            : 'Add something small you can do today, or a habit you want to keep.'}
+          action={<Button title={isSide ? 'Add side quest' : 'Add a quest'} icon="add" onPress={addQuest} />}
+        />
+      ) : total === 0 ? (
+        <T kind="small" style={styles.noMatch}>No {kind} match “{query.trim()}”.</T>
       ) : (
         <>
-          <Card hero tone="mint">
-            <T kind="eyebrow" color={p.ink}>
-              {tab === 'daily' ? 'Today' : 'This week'}
-            </T>
-            <T kind="title">{list.length === 0 ? 'Nothing scheduled' : `${doneCount} of ${list.length} completed`}</T>
-            <ProgressBar ratio={list.length ? doneCount / list.length : 0} color={p.forest} track={p.surface} />
-          </Card>
-          {list.length === 0 ? (
-            <EmptyState
-              mood="cheer"
-              title="Your quest board is clear."
-              body={tab === 'daily' ? 'Nothing due today. Add one or plan ahead.' : 'Nothing due in the next 7 days.'}
-            />
+          <SectionLabel right={<T kind="meta">{library.active.length}</T>}>Active</SectionLabel>
+          {library.active.length > 0 ? (
+            <QuestListCard><QuestRows items={library.active} today={today} showType={filter === 'all'} /></QuestListCard>
           ) : (
-            <View style={{ gap: space.sm }}>
-              {list.map((item) => (
-                <QuestRow key={item.occurrence.id} item={item} today={today} showDue={tab === 'weekly'} />
-              ))}
-            </View>
+            <T kind="small">{searching ? `No active ${kind} match.` : `No active ${kind}.`}</T>
           )}
-          {tab === 'weekly' && later.length > 0 && (
-            <>
-              <SectionLabel>Later</SectionLabel>
-              <View style={{ gap: space.sm }}>
-                {later.map((item) => (
-                  <QuestRow key={item.occurrence.id} item={item} today={today} />
-                ))}
-              </View>
-            </>
-          )}
-          <Button title="+ Add quest" onPress={() => router.push('/task-form')} />
-
-          {completedMain.length > 0 && (
-            <Button kind="ghost" title={showHistory ? 'Hide history' : 'Show completed history'} onPress={() => setShowHistory((v) => !v)} />
-          )}
-          {showHistory && (
-            <View style={{ gap: space.sm }}>
-              {completedMain.slice(0, 50).map((item) => (
-                <QuestRow key={item.occurrence.id} item={item} today={today} />
-              ))}
-            </View>
-          )}
-          <ArchivedQuests type="main" />
+          <Section
+            title="Completed one-time quests"
+            items={library.completed}
+            open={showCompleted || (searching && library.active.length === 0)}
+            onToggle={() => setShowCompleted((v) => !v)}
+            today={today}
+            showType={filter === 'all'}
+          />
+          <Section
+            title="Archived"
+            items={library.archived}
+            open={showArchived || (searching && library.active.length === 0 && library.completed.length === 0)}
+            onToggle={() => setShowArchived((v) => !v)}
+            today={today}
+            showType={filter === 'all'}
+          />
         </>
       )}
     </Screen>
   );
 }
 
-/** Archived quests stay out of the lists but can be opened and restored from here. */
-function ArchivedQuests({ type }: { type: TaskType }) {
+/** A collapsed secondary list (finished one-time quests, archived quests) with its count. */
+function Section({ title, items, open, onToggle, today, showType }: {
+  title: string;
+  items: QuestItem[];
+  open: boolean;
+  onToggle: () => void;
+  today: string;
+  showType: boolean;
+}) {
   const p = usePalette();
-  const [open, setOpen] = useState(false);
-  const archived = useStore((st) => st.snapshot.tasks).filter((t) => !t.active && t.taskType === type);
-  if (archived.length === 0) return null;
+  if (items.length === 0) return null;
   return (
-    <>
-      <Button kind="ghost" title={open ? 'Hide archived' : `Archived (${archived.length})`} onPress={() => setOpen((v) => !v)} />
-      {open &&
-        archived.map((t) => (
-          <Pressable
-            key={t.id}
-            accessibilityRole="button"
-            accessibilityLabel={`Open archived quest ${t.title}`}
-            onPress={() => router.push({ pathname: '/task-form', params: { id: t.id } })}
-            style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm, padding: space.md, borderRadius: radius.md, borderWidth: 1, borderColor: p.border, backgroundColor: p.surface }}>
-            <Ionicons name="archive-outline" size={18} color={p.muted} />
-            <T kind="body" color={p.muted} style={{ flex: 1 }} numberOfLines={1}>
-              {t.title}
-            </T>
-            <T kind="small" color={p.forest}>Restore</T>
-          </Pressable>
-        ))}
-    </>
+    <QuestListCard>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${title}, ${items.length}`}
+        aria-expanded={open}
+        onPress={onToggle}
+        style={({ pressed }) => [styles.toggle, pressed && { opacity: 0.72 }]}>
+        <T kind="bodyStrong" style={styles.grow}>{title}</T>
+        <T kind="meta">{items.length}</T>
+        <Ionicons name={open ? 'chevron-up' : 'chevron-down'} size={16} color={p.muted} aria-hidden />
+      </Pressable>
+      {open && <QuestRows items={items} today={today} showType={showType} divideFirst />}
+    </QuestListCard>
   );
 }
+
+const styles = StyleSheet.create({
+  grow: { flex: 1 },
+  toggle: { flexDirection: 'row', alignItems: 'center', minHeight: 44, paddingHorizontal: space.md, gap: space.sm },
+  noMatch: { paddingVertical: space.md },
+});

@@ -1,5 +1,6 @@
 import { Platform, useColorScheme, type ViewStyle } from 'react-native';
 
+import type { QuestColor } from '@/domain/types';
 import { useStore } from '@/state/store';
 
 /**
@@ -8,7 +9,7 @@ import { useStore } from '@/state/store';
  * Lavender #E7DFF9 · Ink #273D35 · Paper #FFFDF7. Soft optimism with strong readability.
  */
 const light = {
-  canvas: '#FFFDF7', // paper
+  canvas: '#F7FAF8',
   surface: '#FFFFFF',
   border: '#E6ECE6',
   ink: '#273D35',
@@ -28,6 +29,15 @@ const light = {
   rose: '#FBE3E3',
   roseInk: '#B4474B',
   track: '#E3EAE5',
+  input: { fill: '#F5F8F6', border: '#D9E3DD', selection: '#E0EFE6', accent: '#377557' },
+  mapWater: '#ECF6F8',
+  mapWaterDeep: '#D5EAF0',
+  mapRipple: '#587D8B',
+  mapEdge: '#173744',
+  mapLabel: '#F5FAFC',
+  questColors: { green: '#316E54', blue: '#2567AB', purple: '#6945AB', pink: '#A33F73', orange: '#A34822', gold: '#806017' } satisfies Record<QuestColor, string>,
+  /** Categorical series (goals overview), fixed order; validated with the dataviz palette checks on #FFFFFF. */
+  series: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6'],
 
   shell: '#EEF1EA', // outside the phone-width shell on desktop
   shadow: 'rgba(39, 61, 53, 0.06)',
@@ -55,6 +65,15 @@ const dark: typeof light = {
   rose: '#3D2224',
   roseInk: '#F08F92',
   track: '#2A3832',
+  input: { fill: '#202D26', border: '#35473D', selection: '#30483A', accent: '#87C8A2' },
+  mapWater: '#172A33',
+  mapWaterDeep: '#213C46',
+  mapRipple: '#86ADB6',
+  mapEdge: '#101F29',
+  mapLabel: '#F5FAFC',
+  questColors: { green: '#79C89D', blue: '#83B8F5', purple: '#B9A1F8', pink: '#F097C4', orange: '#F8A379', gold: '#E8BE5E' },
+  /** Same hues, stepped for the dark surface (validated on #1A241F). */
+  series: ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#0ca30c', '#9085e9'],
 
   shell: '#0C110E',
   shadow: 'rgba(0, 0, 0, 0.3)',

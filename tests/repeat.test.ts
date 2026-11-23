@@ -2,12 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import { repeatFromRule, repeatSummary, ruleFromRepeat, type RepeatValue } from '../src/domain/repeat';
 
-const custom = (patch: Partial<RepeatValue>): RepeatValue => ({ mode: 'custom', times: '1', every: '1', unit: 'week', anchor: 'completion', ...patch });
+const custom = (patch: Partial<RepeatValue>): RepeatValue => ({ mode: 'repeating', times: '1', every: '1', unit: 'week', anchor: 'completion', ...patch });
 
 describe('repeat picker mapping', () => {
-  it('once and daily', () => {
+  it('once, and daily as every 1 day', () => {
     expect(ruleFromRepeat(custom({ mode: 'once' }))).toBeUndefined();
-    expect(ruleFromRepeat(custom({ mode: 'daily' }))).toEqual({ frequency: 'day', interval: 1, anchorPolicy: 'completion' });
+    expect(ruleFromRepeat(custom({ unit: 'day' }))).toEqual({ frequency: 'day', interval: 1, anchorPolicy: 'completion' });
+    expect(repeatSummary(custom({ unit: 'day' }))).toBe('Every day');
+    expect(repeatFromRule({ frequency: 'day', interval: 1, anchorPolicy: 'completion' })).toMatchObject({ mode: 'repeating', every: '1', unit: 'day', times: '1' });
+    expect(repeatFromRule(undefined)).toMatchObject({ mode: 'once', unit: 'day' }); // Repeating starts at every 1 day
   });
 
   it('custom with 2+ times is a times-per-period quota', () => {
@@ -31,6 +34,6 @@ describe('repeat picker mapping', () => {
     ]) {
       expect(ruleFromRepeat(repeatFromRule(rule))).toEqual(rule);
     }
-    expect(repeatFromRule({ frequency: 'week', interval: 1, anchorPolicy: 'completion' }).mode).toBe('custom');
+    expect(repeatFromRule({ frequency: 'week', interval: 1, anchorPolicy: 'completion' }).mode).toBe('repeating');
   });
 });

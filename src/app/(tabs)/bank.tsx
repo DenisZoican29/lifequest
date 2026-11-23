@@ -40,7 +40,10 @@ function report(res: Result<unknown>, success?: string) {
   else if (success) toast(success);
 }
 
-/** Time Bank: free daily time resets; coins never turn into minutes until you buy (spec §09). */
+/**
+ * Time Bank (addendum A4 §5): minutes left and coins together, then buying time. Simulator and
+ * test-clock controls sit under Demo tools, collapsed. Coins never turn into minutes until you buy.
+ */
 export default function Bank() {
   const p = usePalette();
   const s = useStore((st) => st.snapshot);
@@ -53,6 +56,7 @@ export default function Bank() {
   const [pending, setPending] = useState<{ offer: TimeOffer; intentId: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showLedger, setShowLedger] = useState(false);
+  const [showDemo, setShowDemo] = useState(false);
 
   const use = async (appRef: string, label: string, minutes: number) => {
     const res = await run((st, c) => {
@@ -79,45 +83,49 @@ export default function Bank() {
 
   return (
     <Screen tabs>
-      <ScreenHeader eyebrow="Your balance" title="Time Bank" subtitle="Spend rewards when you choose." />
+      <ScreenHeader title="Time Bank" />
 
-      <Card hero tone={day.blocked ? 'peach' : 'sky'}>
-        <Row style={{ justifyContent: 'space-between' }}>
-          <T kind="eyebrow" color={p.ink}>
-            Daily free time
-          </T>
-          <StatusChip tone={day.blocked ? 'overdue' : 'plain'} icon={day.blocked ? 'lock-closed' : 'flask-outline'} label={day.blocked ? 'Apps paused (demo)' : 'Demo mode'} />
+      <Card hero>
+        <Row style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+          <T kind="eyebrow">Today</T>
+          <StatusChip tone={day.blocked ? 'overdue' : 'demo'} icon={day.blocked ? 'lock-closed' : 'flask-outline'} label={day.blocked ? 'Apps paused (demo)' : 'Demo mode'} />
         </Row>
-        <T kind="title">{day.blocked ? 'Free time used up' : `${day.remainingMinutes} min left`}</T>
-        <T kind="small" color={p.ink}>
-          {day.usedMinutes} / {day.totalMinutes} used · resets tomorrow
-        </T>
-        <View style={{ marginTop: space.xs }}>
-          <ProgressBar ratio={day.totalMinutes ? day.usedMinutes / day.totalMinutes : 1} color={p.forest} track={p.surface} />
-        </View>
-        <Row gap={space.sm} style={{ flexWrap: 'wrap', marginTop: space.xs }}>
-          <StatusChip tone="done" label={`${day.baseMinutes} free`} icon="sunny-outline" />
-          <StatusChip tone="coins" label={`${day.purchasedMinutes} bought`} icon="add-circle-outline" />
-          <StatusChip tone="neutral" label={`${day.usedMinutes} used`} icon="hourglass-outline" />
-        </Row>
-      </Card>
-
-      <Card hero tone="cream">
-        <Row gap={space.lg}>
-          <Coin size={56} />
-          <View style={{ flex: 1 }}>
-            <T kind="eyebrow" color={p.goldInk}>
-              Reward bank
-            </T>
-            <T kind="title">{balance} coins</T>
-            <T kind="meta" color={p.ink}>
-              Earned {totalEarned(s.wallet)} · spent {totalSpent(s.wallet)}
-            </T>
+        <Row gap={space.xl} style={{ flexWrap: 'wrap', marginTop: space.xs }}>
+          <View accessible accessibilityLabel={day.blocked ? 'Free time used up' : `${day.remainingMinutes} minutes of screen time left`}>
+            <T kind="title">{day.blocked ? '0 min' : `${day.remainingMinutes} min`}</T>
+            <T kind="small">screen time left</T>
+          </View>
+          <View accessible accessibilityLabel={`${balance} coins`} style={{ flexDirection: 'row', alignItems: 'center', gap: space.sm }}>
+            <Coin size={34} />
+            <View>
+              <T kind="title" color={p.goldInk}>
+                {balance}
+              </T>
+              <T kind="small">coins</T>
+            </View>
           </View>
         </Row>
+        <View style={{ marginTop: space.xs }}>
+          <ProgressBar ratio={day.totalMinutes ? day.usedMinutes / day.totalMinutes : 1} color={p.forest} />
+        </View>
+        <T kind="meta">
+          {day.usedMinutes} of {day.totalMinutes} min used ({day.baseMinutes} free{day.purchasedMinutes ? ` + ${day.purchasedMinutes} bought` : ''}) · resets at midnight
+        </T>
+        <T kind="meta">
+          Coins earned {totalEarned(s.wallet)} · spent {totalSpent(s.wallet)}
+        </T>
       </Card>
 
+      {apps.length === 0 && (
+        <Card tone="cream">
+          <T kind="bodyStrong">Screen time isn’t set up yet</T>
+          <T kind="small">Pick the apps that share your daily allowance. Until then, your coins wait here.</T>
+          <Button compact title="Set up screen time" onPress={() => router.push('/settings')} />
+        </Card>
+      )}
+
       <SectionLabel>Buy extra time</SectionLabel>
+      <T kind="small">Bought minutes are for today only and expire at midnight. You confirm every purchase.</T>
       <View style={{ gap: space.sm }}>
         {s.settings.offers.map((o) => {
           const short = o.coins - balance;
@@ -150,10 +158,23 @@ export default function Bank() {
         </T>
       </Pressable>
 
-      <SectionLabel>Demo screen time</SectionLabel>
+      <SectionLabel>Demo tools</SectionLabel>
       <DemoBanner />
+      <Pressable
+        onPress={() => setShowDemo((v) => !v)}
+        accessibilityRole="button"
+        accessibilityState={{ expanded: showDemo }}
+        style={({ pressed }) => ({ flexDirection: 'row', alignItems: 'center', gap: space.sm, paddingVertical: space.sm, opacity: pressed ? 0.7 : 1 })}>
+        <Ionicons name={showDemo ? 'chevron-down' : 'chevron-forward'} size={18} color={p.forest} />
+        <T kind="bodyStrong" color={p.forest}>
+          {showDemo ? 'Hide demo tools' : 'Show demo tools'}
+        </T>
+        <T kind="meta">simulate app use, test clock</T>
+      </Pressable>
+      {showDemo && (
+        <>
       <Card>
-        {apps.length === 0 && <T kind="muted">No apps selected. Choose some under Manage.</T>}
+        {apps.length === 0 && <T kind="muted">No apps selected yet. Choose some under Manage.</T>}
         {apps.map((a, i) => (
           <View key={a.id} style={{ gap: space.sm, paddingVertical: space.sm, borderTopWidth: i ? 1 : 0, borderTopColor: p.border }}>
             <Row gap={space.md}>
@@ -198,6 +219,8 @@ export default function Bank() {
           {s.settings.dayOffset !== 0 && <Button compact kind="ghost" title="Back to real date" onPress={async () => report(await run((st, c) => resetClock(st, c)), 'Back to the real date')} />}
         </Row>
       </Card>
+        </>
+      )}
 
       <SectionLabel right={ledger.length > 0 ? <Button compact kind="ghost" title={showLedger ? 'Purchases only' : 'All coin activity'} onPress={() => setShowLedger((v) => !v)} /> : undefined}>
         {showLedger ? 'Coin activity' : 'Purchase history'}

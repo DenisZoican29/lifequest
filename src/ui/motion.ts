@@ -3,7 +3,8 @@ import { AccessibilityInfo, Platform } from 'react-native';
 
 /** True when the OS asks for reduced motion (spec §12: reduced-motion alternative). */
 export function useReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
+  // Stay still until the system preference is known.
+  const [reduced, setReduced] = useState(true);
   useEffect(() => {
     let alive = true;
     AccessibilityInfo.isReduceMotionEnabled()

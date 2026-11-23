@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { archiveTask, completeOccurrence, createGoal, createTask, setGoalStatus, shiftDays } from '../src/domain/commands';
+import { archiveTask, completeOccurrence, createGoal, createTask, setGoalStatus, shiftDays, updateGoal } from '../src/domain/commands';
 import { goalInsights } from '../src/domain/goal-insights';
 import type { RecurrenceRule } from '../src/domain/types';
 import { world } from './helpers';
@@ -155,10 +155,47 @@ describe('goal status', () => {
   });
 });
 
+describe('quest breakdown', () => {
+  it('counts logged completions by quest, including archived quests and the edge of the 28-day window', () => {
+    const { w, goalId } = setup();
+    const gym = addQuest(w, goalId, 'Gym', weekly3);
+    const walk = addQuest(w, goalId, 'Walk', daily);
+    addQuest(w, goalId, 'Stretch', daily);
+    const unrelated = addQuest(w, '', 'Unlinked');
+    log(w, gym);
+    log(w, walk);
+    log(w, unrelated);
+    w.run((s, c) => archiveTask(s, c, walk));
+    next(w, 1);
+    log(w, gym);
+    next(w, 27);
+
+    const result = insights(w, goalId);
+    expect(result.totalDone).toBe(3);
+    expect(result.questCompletions.map(({ task, totalDone, recentDone }) => [task.title, totalDone, recentDone])).toEqual([
+      ['Gym', 2, 1],
+      ['Walk', 1, 0],
+      ['Stretch', 0, 0],
+    ]);
+  });
+});
+
 describe('goal validation', () => {
-  it('requires a deadline that is not in the past', () => {
+  it('the deadline is optional, but a new one cannot be in the past', () => {
     const w = world();
-    expect(() => w.run((s, c) => createGoal(s, c, { title: 'G', description: '', deadline: '' }))).toThrow(/deadline/i);
+    w.run((s, c) => createGoal(s, c, { title: 'Read more', description: '', deadline: '' }));
+    expect(w.s.goals[0].deadline).toBeUndefined();
+    expect(goalInsights(w.s, w.s.goals[0], w.clock.today())).toMatchObject({ deadline: undefined, daysLeft: undefined, timeUsed: undefined });
     expect(() => w.run((s, c) => createGoal(s, c, { title: 'G', description: '', deadline: '2026-11-15' }))).toThrow(/today or later/);
+  });
+
+  it('a deadline can be added later and removed again', () => {
+    const w = world();
+    w.run((s, c) => createGoal(s, c, { title: 'Read more', description: '', deadline: '' }));
+    const id = w.s.goals[0].id;
+    w.run((s, c) => updateGoal(s, c, id, { title: 'Read more', description: '', deadline: '2027-03-01' }));
+    expect(w.s.goals[0].deadline).toBe('2027-03-01');
+    w.run((s, c) => updateGoal(s, c, id, { title: 'Read more', description: '', deadline: '' }));
+    expect(w.s.goals[0].deadline).toBeUndefined();
   });
 });

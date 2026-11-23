@@ -6,6 +6,7 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import type { ComponentProps, ReactNode } from 'react';
 import {
   Modal,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -19,6 +20,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { Coin, Mascot, type Mood } from './art';
+import { inputStyles, useInputFrame } from './form-controls';
 import { font, radius, softShadow, space, TAB_BAR_SPACE, TOUCH, usePalette, type Palette } from './theme';
 
 export type IconName = ComponentProps<typeof Ionicons>['name'];
@@ -31,6 +33,7 @@ export function Screen({
   edges,
   tabs,
   hero,
+  footer,
 }: {
   children: ReactNode;
   edges?: ('top' | 'bottom')[];
@@ -38,17 +41,21 @@ export function Screen({
   tabs?: boolean;
   /** Full-bleed content above the padded column. */
   hero?: ReactNode;
+  /** An action area that stays visible below the scrollable content. */
+  footer?: ReactNode;
 }) {
   const p = usePalette();
   return (
     <SafeAreaView edges={edges ?? (hero ? [] : ['top'])} style={{ flex: 1, backgroundColor: p.canvas }}>
       <ScrollView
-        contentContainerStyle={{ flexGrow: 1, paddingBottom: tabs ? TAB_BAR_SPACE : space.xxl }}
+        contentContainerStyle={{ flexGrow: 1, paddingBottom: tabs ? TAB_BAR_SPACE : footer ? space.lg : space.xxl }}
+        automaticallyAdjustKeyboardInsets={Platform.OS === 'ios' && footer ? true : undefined}
         keyboardShouldPersistTaps="handled"
         style={{ backgroundColor: p.canvas }}>
         {hero}
         <View style={styles.column}>{children}</View>
       </ScrollView>
+      {footer}
     </SafeAreaView>
   );
 }
@@ -93,6 +100,11 @@ export function Card({ children, style, tone = 'surface', hero }: { children: Re
 
 export function Row({ children, style, gap = space.sm }: { children: ReactNode; style?: StyleProp<ViewStyle>; gap?: number }) {
   return <View style={[{ flexDirection: 'row', alignItems: 'center', gap }, style]}>{children}</View>;
+}
+
+export function FormFooter({ children }: { children: ReactNode }) {
+  const p = usePalette();
+  return <View style={[styles.formFooter, { backgroundColor: p.surface, borderColor: p.border }]}>{children}</View>;
 }
 
 // ---------------------------------------------------------------- text
@@ -203,6 +215,67 @@ export function IconButton({ icon, onPress, label }: { icon: IconName; onPress: 
   );
 }
 
+export function DisclosureRow({ title, summary, leading, summaryColor, expanded, onPress, inset }: {
+  title: string;
+  summary: string;
+  leading?: ReactNode;
+  summaryColor?: string;
+  expanded: boolean;
+  onPress: () => void;
+  inset?: boolean;
+}) {
+  const p = usePalette();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${title}. ${summary}`}
+      aria-expanded={expanded}
+      onPress={onPress}
+      style={({ pressed }) => [styles.disclosure, inset && [styles.disclosureInset, { borderColor: p.border }], pressed && { opacity: 0.7 }]}>
+      {leading}
+      <View style={{ flex: 1 }}>
+        <T kind="bodyStrong">{title}</T>
+        <T kind="meta" color={summaryColor}>{summary}</T>
+      </View>
+      <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={p.muted} aria-hidden />
+    </Pressable>
+  );
+}
+
+/**
+ * A disclosure row and its content in one card: the row is the header and, when expanded, the
+ * content sits below a divider on a lightly tinted background, so what belongs together reads together.
+ */
+export function DisclosureCard({ title, summary, leading, summaryColor, expanded, onPress, children }: {
+  title: string;
+  summary: string;
+  leading?: ReactNode;
+  summaryColor?: string;
+  expanded: boolean;
+  onPress: () => void;
+  children: ReactNode;
+}) {
+  const p = usePalette();
+  return (
+    <View style={[styles.disclosureCard, { borderColor: p.border, backgroundColor: p.surface }]}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`${title}. ${summary}`}
+        aria-expanded={expanded}
+        onPress={onPress}
+        style={({ pressed }) => [styles.disclosure, styles.disclosureCardHead, pressed && { opacity: 0.7 }]}>
+        {leading}
+        <View style={{ flex: 1 }}>
+          <T kind="bodyStrong">{title}</T>
+          <T kind="meta" color={summaryColor}>{summary}</T>
+        </View>
+        <Ionicons name={expanded ? 'chevron-up' : 'chevron-down'} size={16} color={p.muted} aria-hidden />
+      </Pressable>
+      {expanded && <View style={[styles.disclosureCardBody, { borderTopColor: p.border, backgroundColor: p.canvas }]}>{children}</View>}
+    </View>
+  );
+}
+
 /** Selectable filter pill. */
 export function Chip({ label, selected, onPress, icon }: { label: string; selected?: boolean; onPress: () => void; icon?: IconName }) {
   const p = usePalette();
@@ -258,6 +331,41 @@ export function Segmented<V extends string>({
   );
 }
 
+/** View navigation between adjacent lists. Use Segmented for field values and settings. */
+export function UnderlineTabs<V extends string>({ options, value, onChange, label, fit = false }: {
+  options: { value: V; label: string; accessibilityLabel?: string; trailing?: ReactNode; count?: number }[];
+  value: V;
+  onChange: (v: V) => void;
+  label: string;
+  /** Size tabs to their labels (still filling the row), so a short "All" leaves room for longer ones. */
+  fit?: boolean;
+}) {
+  const p = usePalette();
+  return (
+    <View accessibilityRole="tablist" aria-label={label} style={[styles.underlineTabs, { borderBottomColor: p.border }]}>
+      {options.map((o) => {
+        const selected = value === o.value;
+        return (
+          <Pressable
+            key={o.value}
+            accessibilityRole="tab"
+            accessibilityLabel={o.accessibilityLabel ?? o.label}
+            aria-selected={selected}
+            onPress={() => onChange(o.value)}
+            style={({ pressed }) => [styles.underlineTab, fit && styles.underlineTabFit, pressed && { opacity: 0.7 }]}>
+            <View style={styles.underlineTitle}>
+              <T kind="bodyStrong" color={selected ? p.ink : p.muted} style={{ flexShrink: 1, textAlign: 'center' }}>{o.label}</T>
+              {o.trailing}
+              {!!o.count && <View aria-hidden><T kind="meta" color={p.roseInk}>{o.count}</T></View>}
+            </View>
+            {selected && <View aria-hidden style={[styles.underline, { backgroundColor: p.questColors.blue }]} />}
+          </Pressable>
+        );
+      })}
+    </View>
+  );
+}
+
 export function Field({
   label,
   value,
@@ -267,6 +375,7 @@ export function Field({
   numeric,
   hint,
   error,
+  inline,
 }: {
   label: string;
   value: string;
@@ -276,28 +385,38 @@ export function Field({
   numeric?: boolean;
   hint?: string;
   error?: string;
+  inline?: boolean;
 }) {
-  const p = usePalette();
+  const { palette: p, focusHandlers, frame, highlighted } = useInputFrame({ invalid: Boolean(error) });
   return (
-    <View style={{ gap: 6, marginBottom: space.md }}>
-      <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>
-        {label}
-      </T>
-      <TextInput
-        accessibilityLabel={label}
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={p.faint}
-        multiline={multiline}
-        keyboardType={numeric ? 'number-pad' : 'default'}
-        inputMode={numeric ? 'numeric' : 'text'}
-        style={[
-          styles.input,
-          multiline && { minHeight: 88, textAlignVertical: 'top', paddingTop: space.md },
-          { color: p.ink, backgroundColor: p.surface, borderColor: error ? p.roseInk : p.border },
-        ]}
-      />
+    <View style={{ gap: 6, marginBottom: inline ? 0 : space.md }}>
+      <View style={inline ? [styles.inlineField, { borderColor: p.border }] : styles.fieldStack}>
+        <T kind="small" color={p.ink} style={[inputStyles.label, styles.fieldLabel, inline && styles.inlineLabel]}>
+          {label}
+        </T>
+        <TextInput
+          accessibilityLabel={label}
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={p.muted}
+          selectionColor={p.input.accent}
+          multiline={multiline}
+          keyboardType={numeric ? 'number-pad' : 'default'}
+          inputMode={numeric ? 'numeric' : 'text'}
+          {...focusHandlers}
+          style={[
+            inputStyles.frame,
+            styles.input,
+            inline && styles.inlineInput,
+            multiline && styles.multilineInput,
+            frame,
+            inputStyles.ownFocusOutline,
+            highlighted && { paddingHorizontal: (inline ? space.sm : space.lg) - 1, ...(multiline && { paddingTop: space.md - 1 }) },
+            { color: p.ink },
+          ]}
+        />
+      </View>
       {error ? (
         <T kind="small" color={p.roseInk}>
           {error}
@@ -305,6 +424,48 @@ export function Field({
       ) : hint ? (
         <T kind="small">{hint}</T>
       ) : null}
+    </View>
+  );
+}
+
+/** A search box with a magnifier and a clear button. Escape clears it (web). */
+export function SearchField({ label, value, onChangeText, onSubmit, onEscape, autoFocus, returnKeyType = 'search' }: {
+  label: string;
+  value: string;
+  onChangeText: (s: string) => void;
+  onSubmit?: () => void;
+  onEscape?: () => void;
+  autoFocus?: boolean;
+  returnKeyType?: 'search' | 'done';
+}) {
+  const { palette: p, focusHandlers, frame, highlighted } = useInputFrame();
+  return (
+    <View style={[inputStyles.frame, styles.search, frame, highlighted && { paddingHorizontal: space.md - 1 }]}>
+      <Ionicons name="search" size={18} color={p.muted} aria-hidden />
+      <TextInput
+        accessibilityLabel={label}
+        placeholder={label}
+        placeholderTextColor={p.muted}
+        value={value}
+        onChangeText={onChangeText}
+        autoFocus={autoFocus}
+        autoCorrect={false}
+        returnKeyType={returnKeyType}
+        onSubmitEditing={onSubmit}
+        {...focusHandlers}
+        onKeyPress={(e) => {
+          if (e.nativeEvent.key === 'Escape') {
+            if (onEscape) onEscape();
+            else onChangeText('');
+          }
+        }}
+        style={[styles.searchInput, inputStyles.ownFocusOutline, { color: p.ink }]}
+      />
+      {value !== '' && (
+        <Pressable accessibilityRole="button" accessibilityLabel="Clear search" onPress={() => onChangeText('')} hitSlop={10} style={styles.searchClear}>
+          <Ionicons name="close-circle" size={18} color={p.muted} />
+        </Pressable>
+      )}
     </View>
   );
 }
@@ -470,6 +631,19 @@ export const textStyles = StyleSheet.create({
 
 const styles = StyleSheet.create({
   column: { width: '100%', paddingHorizontal: space.lg + 2, paddingTop: space.lg, gap: space.md },
+  formFooter: { borderTopWidth: 1, paddingHorizontal: space.lg + 2, paddingVertical: space.sm },
+  disclosure: { flexDirection: 'row', alignItems: 'center', minHeight: TOUCH, paddingVertical: space.xs, gap: space.md },
+  disclosureInset: { borderWidth: 1, borderRadius: radius.md, paddingHorizontal: space.md, paddingVertical: space.sm },
+  disclosureCard: { borderWidth: 1, borderRadius: radius.md, overflow: 'hidden' },
+  disclosureCardHead: { paddingHorizontal: space.md, paddingVertical: space.sm },
+  disclosureCardBody: { borderTopWidth: 1, padding: space.md, gap: space.sm },
+  underlineTabs: { flexDirection: 'row', borderBottomWidth: 1 },
+  underlineTab: { flex: 1, minHeight: 48, alignItems: 'center', justifyContent: 'center', paddingVertical: space.xs },
+  underlineTabFit: { flexBasis: 'auto', paddingHorizontal: space.sm },
+  underlineTitle: { flexDirection: 'row', alignItems: 'center', gap: space.xs, paddingHorizontal: space.xs },
+  underline: { position: 'absolute', left: 0, right: 0, bottom: -1, height: 2 },
+  inlineField: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: space.md, paddingHorizontal: space.md, paddingVertical: space.xs, borderWidth: 1, borderRadius: radius.md },
+  inlineInput: { width: 62, minHeight: TOUCH, paddingHorizontal: space.sm, textAlign: 'center' },
   card: { borderRadius: radius.lg, padding: space.lg + 2, gap: space.sm, borderWidth: 1 },
   heroCard: { borderRadius: radius.xl, padding: space.xl },
   button: {
@@ -488,7 +662,14 @@ const styles = StyleSheet.create({
   segmented: { flexDirection: 'row', borderRadius: radius.pill, padding: 4, borderWidth: 1 },
   segment: { flex: 1, flexDirection: 'row', gap: 6, minHeight: TOUCH - 4, alignItems: 'center', justifyContent: 'center', borderRadius: radius.pill, paddingHorizontal: 6 },
   count: { minWidth: 18, height: 18, borderRadius: 9, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 5 },
-  input: { minHeight: 50, borderWidth: 1, borderRadius: radius.md, paddingHorizontal: space.md + 2, fontSize: 16, fontFamily: font.regular },
+  search: { flexDirection: 'row', alignItems: 'center', gap: space.sm, minHeight: TOUCH + 2, paddingHorizontal: space.md },
+  searchInput: { flex: 1, minHeight: TOUCH - 2, fontSize: 16, fontFamily: font.regular },
+  searchClear: { padding: 2 },
+  fieldStack: { gap: space.sm },
+  fieldLabel: { fontFamily: font.bold },
+  inlineLabel: { flexShrink: 1 },
+  input: { minHeight: 50, paddingHorizontal: space.lg, fontSize: 16, fontFamily: font.regular },
+  multilineInput: { minHeight: 88, textAlignVertical: 'top', paddingTop: space.md },
   status: { flexDirection: 'row', alignItems: 'center', gap: 4, paddingHorizontal: 10, paddingVertical: 4, borderRadius: radius.pill, alignSelf: 'flex-start' },
   empty: { borderWidth: 1, borderRadius: radius.lg, padding: space.xl, alignItems: 'center', gap: space.sm },
   demo: { flexDirection: 'row', alignItems: 'center', gap: space.sm, borderRadius: radius.md, paddingHorizontal: space.md + 2, paddingVertical: space.md },

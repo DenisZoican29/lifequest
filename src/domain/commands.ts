@@ -6,13 +6,17 @@
 import { addPeriod, isLocalDate } from './dates';
 import { allowanceFor, coinBalance } from './economy';
 import { newId } from './ids';
-import { isQuota, nextDueDate, nextQuotaDate, periodContaining } from './recurrence';
+import { GOAL_COLOR_COUNT } from './goal-share';
+import { questIconPreset, type QuestIcon } from './quest-mark';
+import { canWarn, isDailyRule, isQuota, nextDueDate, nextQuotaDate, periodContaining } from './recurrence';
+import { isQuestColor } from './types';
 import type {
   AppSelection,
   ChangeSet,
   Goal,
   GoalStatus,
   Milestone,
+  QuestColor,
   RecurrenceRule,
   Settings,
   Snapshot,
@@ -92,16 +96,34 @@ function find<T extends { id: string }>(rows: readonly T[], id: string, what: st
 
 // ---------------------------------------------------------------- goals
 
-/** An end goal ("Get a new job") with a deadline; quests linked to it drive its status. */
+/** An end goal ("Get a new job"), with an optional deadline; quests linked to it drive its status. */
 export interface GoalInput {
   title: string;
   description: string;
+  /** Optional: empty means no deadline. */
   deadline: string;
+  /** Preset icon key; empty or undefined means "use initials". */
+  icon?: string;
+  /** Goal colour index (0 to GOAL_COLOR_COUNT - 1); undefined means automatic. */
+  color?: number;
 }
 
-function requireDeadline(value: string, today: string, previous?: string): string {
+function cleanGoalColor(color: number | undefined): number | undefined {
+  if (color === undefined) return undefined;
+  if (!Number.isInteger(color) || color < 0 || color >= GOAL_COLOR_COUNT) throw new DomainError('invalid', 'Choose a goal colour from the palette.');
+  return color;
+}
+
+/** Icon keys are short tokens; anything else is dropped (shown as initials). */
+function cleanIcon(icon: string | undefined): string | undefined {
+  const v = icon?.trim();
+  return v && /^[a-z0-9-]{1,32}$/.test(v) ? v : undefined;
+}
+
+/** A goal's deadline is optional; when given, a new one must not be in the past. */
+function checkDeadline(value: string, today: string, previous?: string): string | undefined {
   const d = requireDate(value, 'Deadline');
-  if (!d) throw new DomainError('invalid', 'Pick a deadline for this goal.');
+  if (!d) return undefined;
   // Keeping an existing (possibly passed) deadline is fine; a new one must not be in the past.
   if (d < today && d !== previous) throw new DomainError('invalid', 'The deadline must be today or later.');
   return d;
@@ -109,11 +131,14 @@ function requireDeadline(value: string, today: string, previous?: string): strin
 
 export function createGoal(_s: Snapshot, clock: Clock, input: GoalInput): ChangeSet {
   const now = clock.now().toISOString();
+  const deadline = checkDeadline(input.deadline, clock.today());
   const goal: Goal = {
     id: newId(),
     title: requireText(input.title, 'Title'),
     description: input.description.trim(),
-    deadline: requireDeadline(input.deadline, clock.today()),
+    ...(deadline ? { deadline } : {}),
+    ...(cleanIcon(input.icon) ? { icon: cleanIcon(input.icon) } : {}),
+    ...(cleanGoalColor(input.color) !== undefined ? { color: input.color } : {}),
     status: 'active',
     createdAt: now,
     updatedAt: now,
@@ -122,15 +147,20 @@ export function createGoal(_s: Snapshot, clock: Clock, input: GoalInput): Change
 }
 
 export function updateGoal(s: Snapshot, clock: Clock, id: string, input: GoalInput): ChangeSet {
-  const goal = find(s.goals, id, 'Goal');
+  const { icon: _old, color: _oldColor, deadline: oldDeadline, ...goal } = find(s.goals, id, 'Goal');
+  const icon = cleanIcon(input.icon);
+  const color = cleanGoalColor(input.color);
+  const deadline = checkDeadline(input.deadline, clock.today(), oldDeadline);
   return changes({
     put: {
       goals: [
         {
           ...goal,
+          ...(icon ? { icon } : {}),
+          ...(color !== undefined ? { color } : {}),
+          ...(deadline ? { deadline } : {}),
           title: requireText(input.title, 'Title'),
           description: input.description.trim(),
-          deadline: requireDeadline(input.deadline, clock.today(), goal.deadline),
           updatedAt: clock.now().toISOString(),
         },
       ],
@@ -171,16 +201,26 @@ export function deleteMilestone(s: Snapshot, _clock: Clock, id: string): ChangeS
 
 // ---------------------------------------------------------------- tasks
 
+/** Most coins one completion can pay. */
+export const MAX_REWARD_COINS = 50;
+
 export interface TaskInput {
   title: string;
   description: string;
   taskType: TaskType;
   goalId?: string;
+  /** Omit to keep the current icon. Use null to return to the default. */
+  icon?: QuestIcon | null;
+  /** Omit to keep the current color. Use null to return to the default. */
+  color?: QuestColor | null;
   rewardCoins: number;
   dueAt: string;
   recurrence?: RecurrenceRule;
   /** "N times between two dates". Replaces `recurrence`; `dueAt` is ignored in favour of `window.start`. */
   window?: TargetWindow;
+  /** No due date: one-offs stay available until done; repeating quests run any time in each period. Ignored for date ranges. */
+  noDueDate?: boolean;
+  /** Deadline warning, in days. Ignored for undated one-offs and daily quests (see `canWarn`). */
   reminderDaysBefore?: number;
 }
 
@@ -204,19 +244,31 @@ function validateTask(s: Snapshot, input: TaskInput) {
     if (input.taskType === 'side') throw new DomainError('invalid', 'Side quests cannot be linked to a goal.');
     find(s.goals, input.goalId, 'Goal');
   }
+  if (input.color != null && !isQuestColor(input.color)) throw new DomainError('invalid', 'Choose a quest color from the palette.');
+  if (input.icon != null && !questIconPreset(input.icon)) throw new DomainError('invalid', 'Choose a quest icon from the picker.');
+  const noDueDate = !window && !!input.noDueDate;
+  const rule = window ? undefined : validateRule(input.recurrence);
+  // Without a due date, "every 2 weeks" means once in each 2-week period, whenever suits you.
+  const recurrence = noDueDate && rule && !rule.timesPerPeriod && !isDailyRule(rule)
+    ? { frequency: rule.frequency, interval: rule.interval, anchorPolicy: 'calendar' as const, timesPerPeriod: 1 }
+    : rule;
+  const warns = canWarn({ recurrence, window, noDueDate });
   return {
     title: requireText(input.title, 'Title'),
     description: input.description.trim(),
     taskType: input.taskType,
     goalId: input.taskType === 'main' ? input.goalId || undefined : undefined,
-    rewardCoins: requireNonNegativeInt(input.rewardCoins, 'Coin reward', 10_000),
+    ...(input.icon !== undefined ? { icon: input.icon ?? undefined } : {}),
+    ...(input.color !== undefined ? { color: input.color ?? undefined } : {}),
+    rewardCoins: requireNonNegativeInt(input.rewardCoins, 'Coin reward', MAX_REWARD_COINS),
     dueAt,
-    recurrence: window ? undefined : validateRule(input.recurrence),
+    recurrence,
     window,
+    noDueDate: noDueDate || undefined,
     reminderDaysBefore:
-      input.reminderDaysBefore === undefined
+      input.reminderDaysBefore === undefined || !warns
         ? undefined
-        : requireNonNegativeInt(input.reminderDaysBefore, 'Reminder', 365),
+        : requireNonNegativeInt(input.reminderDaysBefore, 'Warning days', 365),
   };
 }
 
@@ -253,7 +305,9 @@ export function updateTask(s: Snapshot, clock: Clock, id: string, input: TaskInp
   if (valid.window) {
     // Date-range quests: the form edits the window itself; what's already done inside it still counts.
     const updated: TaskDefinition = { ...task, ...valid, updatedAt: clock.now().toISOString() };
-    return changes({ put: { tasks: [updated], occurrences: windowOccurrences(s, updated, valid.window, clock.today()) } });
+    const window = valid.window;
+    const changed = task.window?.start !== window.start || task.window.end !== window.end || task.window.times !== window.times;
+    return changes({ put: { tasks: [updated], occurrences: changed ? windowOccurrences(s, updated, window, clock.today()) : [] } });
   }
   // The form edits the *next* due date. Moving it re-anchors the schedule there.
   const moved = valid.dueAt !== nextDueOf(s, task);
@@ -412,6 +466,8 @@ export function skipOccurrence(s: Snapshot, clock: Clock, occurrenceId: string):
   });
 }
 
+export const MAX_SNOOZE_DAYS = 365;
+
 /**
  * Moves an open occurrence to `days` from today without reward (spec design §10:
  * "A little behind schedule. Snooze, reschedule, or complete").
@@ -419,7 +475,7 @@ export function skipOccurrence(s: Snapshot, clock: Clock, occurrenceId: string):
 export function snoozeOccurrence(s: Snapshot, clock: Clock, occurrenceId: string, days: number): ChangeSet {
   const occ = find(s.occurrences, occurrenceId, 'Quest');
   if (occ.status !== 'open') throw new DomainError('already-completed', 'This quest is already closed.');
-  if (!Number.isInteger(days) || days < 1 || days > 365) throw new DomainError('invalid', 'Snooze must be 1–365 days.');
+  if (!Number.isInteger(days) || days < 1 || days > MAX_SNOOZE_DAYS) throw new DomainError('invalid', `Snooze must be 1–${MAX_SNOOZE_DAYS} days.`);
   return changes({
     put: { occurrences: [{ ...occ, scheduledFor: addPeriod(clock.today(), 'day', days) }] },
     guards: [{ kind: 'occurrenceOpen', occurrenceId: occ.id }],

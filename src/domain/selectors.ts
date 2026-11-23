@@ -1,18 +1,21 @@
 import { doneInPeriod } from './commands';
-import { format } from 'date-fns';
+import { matchesAll } from './goal-search';
+import { format, startOfWeek } from 'date-fns';
 
-import { daysBetween, fromLocalDate } from './dates';
-import { isQuota, periodContaining } from './recurrence';
+import { addPeriod, daysBetween, fromLocalDate, toLocalDate } from './dates';
+import { canWarn, isQuota, isUndated, periodContaining } from './recurrence';
 import type { Goal, LocalDate, Milestone, Snapshot, TaskDefinition, TaskOccurrence, TaskType } from './types';
 
 export interface QuestItem {
   occurrence: TaskOccurrence;
   task: TaskDefinition;
-  /** Days until due; negative = overdue. */
+  /** Days until due; negative = overdue (or, for a quest without a due date, available since then). */
   dueInDays: number;
+  /** No due date (daily quests and undated one-offs): never overdue, no reminder or deadline warning. */
+  undated: boolean;
   overdue: boolean;
-  /** Side quests: inside the reminder window. */
-  reminderActive: boolean;
+  /** Open side quests: the deadline has passed, or it falls inside the quest's warning period. */
+  warning?: DeadlineLevel;
   /** "N times per period" quests: progress in the period containing today. */
   quota?: QuotaProgress;
 }
@@ -68,19 +71,22 @@ export function quotaProgress(s: Snapshot, task: TaskDefinition, today: LocalDat
   };
 }
 
-function toItem(s: Snapshot, o: TaskOccurrence, task: TaskDefinition, today: LocalDate): QuestItem {
+export function questItem(s: Snapshot, o: TaskOccurrence, task: TaskDefinition, today: LocalDate): QuestItem {
   const dueInDays = daysBetween(today, o.scheduledFor);
-  const reminder = task.reminderDaysBefore;
   const quota = quotaProgress(s, task, today);
-  return {
+  const undated = isUndated(task);
+  const item: QuestItem = {
     occurrence: o,
     task,
     dueInDays,
+    undated,
     quota,
-    // A quota quest left open from an earlier period just carries on in the current one.
-    overdue: o.status === 'open' && dueInDays < 0 && !quota,
-    reminderActive: o.status === 'open' && reminder !== undefined && dueInDays >= 0 && dueInDays <= reminder,
+    // A quota quest left open from an earlier period just carries on in the current one, and a
+    // quest without a due date just stays available (a missed day leaves no backlog).
+    overdue: o.status === 'open' && dueInDays < 0 && !quota && !undated,
   };
+  if (task.taskType === 'side' && task.active && o.status === 'open') item.warning = deadlineLevel(item, today);
+  return item;
 }
 
 function join(s: Snapshot, filter: (o: TaskOccurrence) => boolean, today: LocalDate): QuestItem[] {
@@ -88,7 +94,7 @@ function join(s: Snapshot, filter: (o: TaskOccurrence) => boolean, today: LocalD
   const out: QuestItem[] = [];
   for (const o of s.occurrences) {
     const t = tasks.get(o.taskDefinitionId);
-    if (t && filter(o)) out.push(toItem(s, o, t, today));
+    if (t && filter(o)) out.push(questItem(s, o, t, today));
   }
   return out;
 }
@@ -136,6 +142,137 @@ export function sideQuests(s: Snapshot, today: LocalDate): QuestItem[] {
   return join(s, (o) => o.status === 'open', today)
     .filter((i) => i.task.taskType === 'side' && i.task.active)
     .sort(byDue);
+}
+
+// ---------------------------------------------------------------- quest board (addendum A4 §2)
+
+export type BoardRange = 'today' | 'week';
+
+export interface QuestBoard {
+  start: LocalDate;
+  end: LocalDate;
+  /** Open, scheduled before the range (never quota quests, which carry on in the current period, nor quests without a due date). */
+  overdue: QuestItem[];
+  /** Open, scheduled inside the range (or a quota quest's current period), by scheduled date. */
+  todo: QuestItem[];
+  /** Completed inside the range, newest first; one row per quota quest (its latest log). */
+  completed: QuestItem[];
+  /** Open, scheduled after the range, soonest first. */
+  upcoming: QuestItem[];
+  /** Open rows (overdue + to do). */
+  openCount: number;
+  /** Completions logged inside the range (every log of a quota quest counts). */
+  doneCount: number;
+}
+
+/** Monday to Sunday containing `today`, in the app's local calendar. */
+export function weekBounds(today: LocalDate): { start: LocalDate; end: LocalDate } {
+  const start = toLocalDate(startOfWeek(fromLocalDate(today), { weekStartsOn: 1 }));
+  return { start, end: addPeriod(start, 'day', 6) };
+}
+
+/**
+ * The Quests tab's lists for Today or This week (Monday–Sunday). Today's quests are part of
+ * the week, so completing one updates both views.
+ */
+export function questBoard(s: Snapshot, today: LocalDate, range: BoardRange, type: TaskType = 'main'): QuestBoard {
+  const { start, end } = range === 'today' ? { start: today, end: today } : weekBounds(today);
+  const open = join(s, (o) => o.status === 'open', today)
+    .filter((i) => i.task.taskType === type && i.task.active)
+    .sort(byDue);
+  const overdue: QuestItem[] = [];
+  const todo: QuestItem[] = [];
+  const upcoming: QuestItem[] = [];
+  for (const i of open) {
+    const d = i.occurrence.scheduledFor;
+    if (d > end) upcoming.push(i);
+    else if (i.quota && !i.quota.missed && i.quota.done >= i.quota.times) continue; // target met: nothing to do, its logs are under Completed
+    else if (d < start && !i.quota && !i.undated) overdue.push(i);
+    else todo.push(i);
+  }
+  const done = join(s, (o) => o.status === 'completed' && !!o.completedOn && o.completedOn >= start && o.completedOn <= end, today)
+    .filter((i) => i.task.taskType === type)
+    .sort((a, b) => (b.occurrence.completedAt ?? '').localeCompare(a.occurrence.completedAt ?? ''));
+  return {
+    start,
+    end,
+    overdue,
+    todo,
+    completed: collapseQuota(done),
+    upcoming,
+    openCount: overdue.length + todo.length,
+    doneCount: done.length,
+  };
+}
+
+// ---------------------------------------------------------------- quests library (addendum A4 §2, Quests library)
+
+export type LibraryFilter = 'all' | TaskType;
+
+export interface QuestLibrary {
+  /** Active quests with an open occurrence (including ones scheduled for later), soonest first. */
+  active: QuestItem[];
+  /** Active quests with nothing left to do: finished one-offs and date ranges. Newest completion first. */
+  completed: QuestItem[];
+  /** Archived quests, most recently archived first. */
+  archived: QuestItem[];
+}
+
+const latest = (os: TaskOccurrence[]) =>
+  [...os].sort((a, b) => (b.completedAt ?? b.scheduledFor).localeCompare(a.completedAt ?? a.scheduledFor))[0];
+
+/**
+ * One row per quest definition for the Quests tab, filtered by type and by a search over the
+ * title and the linked goal's title. A repeating quest stays in the library after each log.
+ */
+export function questLibrary(s: Snapshot, today: LocalDate, filter: LibraryFilter = 'all', query = ''): QuestLibrary {
+  const goals = new Map(s.goals.map((g) => [g.id, g.title]));
+  const byTask = new Map<string, TaskOccurrence[]>();
+  for (const o of s.occurrences) byTask.set(o.taskDefinitionId, [...(byTask.get(o.taskDefinitionId) ?? []), o]);
+  const out: QuestLibrary = { active: [], completed: [], archived: [] };
+  for (const task of s.tasks) {
+    if (filter !== 'all' && task.taskType !== filter) continue;
+    if (!matchesAll(`${task.title} ${task.goalId ? (goals.get(task.goalId) ?? '') : ''}`, query)) continue;
+    const os = byTask.get(task.id) ?? [];
+    const open = os.filter((o) => o.status === 'open').sort((a, b) => a.scheduledFor.localeCompare(b.scheduledFor))[0];
+    const shown = (task.active && open) || latest(os.filter((o) => o.status === 'completed')) || latest(os)
+      || { id: `none-${task.id}`, taskDefinitionId: task.id, scheduledFor: task.dueAt, status: 'skipped' as const };
+    const item = questItem(s, shown, task, today);
+    if (!task.active) out.archived.push(item);
+    else if (open) out.active.push(item);
+    else out.completed.push(item);
+  }
+  out.active.sort(byDue);
+  out.completed.sort((a, b) => (b.occurrence.completedAt ?? '').localeCompare(a.occurrence.completedAt ?? ''));
+  out.archived.sort((a, b) => b.task.updatedAt.localeCompare(a.task.updatedAt));
+  return out;
+}
+
+// ---------------------------------------------------------------- Today progress ring (addendum A4 §2)
+
+export interface TodayProgress {
+  /** Distinct quests of this type logged today (the first log of a quest counts; more logs don't). */
+  logged: number;
+  /** Distinct quests available to log today or logged today. */
+  total: number;
+  /** Quests still to log today. */
+  left: number;
+}
+
+/**
+ * The ring above Today's list: distinct quests of the tab's type that are available to log today
+ * (due or overdue, quota not yet met) or were logged on the current local date.
+ */
+export function todayProgress(s: Snapshot, today: LocalDate, type: TaskType): TodayProgress {
+  const board = questBoard(s, today, 'today', type);
+  const types = new Map(s.tasks.map((t) => [t.id, t.taskType]));
+  const logged = new Set(
+    s.occurrences
+      .filter((o) => o.status === 'completed' && o.completedOn === today && types.get(o.taskDefinitionId) === type)
+      .map((o) => o.taskDefinitionId),
+  );
+  const all = new Set([...board.overdue, ...board.todo].map((i) => i.task.id).concat([...logged]));
+  return { logged: logged.size, total: all.size, left: all.size - logged.size };
 }
 
 export function completedTodayCount(s: Snapshot, today: LocalDate): number {
@@ -186,4 +323,65 @@ export function nextMilestone(s: Snapshot): NextMilestone | undefined {
     .sort((a, b) => (a.dueAt ?? '9999').localeCompare(b.dueAt ?? '9999') || a.order - b.order);
   const m = candidates[0];
   return m ? { goal: goals.get(m.goalId)!, milestone: m } : undefined;
+}
+
+// ---------------------------------------------------------------- side-quest warning (addendum A4 §2, Today tabs)
+
+/** `overdue`: a deadline has passed (red). `soon`: the deadline is inside the quest's warning period (amber). */
+export type DeadlineLevel = 'overdue' | 'soon';
+
+/** Side quests without their own setting warn from the day before ("today or tomorrow"). */
+export const DEFAULT_WARNING_DAYS = 1;
+
+/** How many days before its deadline a side quest starts warning (`reminderDaysBefore`, e.g. 14 for an oil change). */
+export const warningDays = (task: Pick<TaskDefinition, 'reminderDaysBefore'>) => task.reminderDaysBefore ?? DEFAULT_WARNING_DAYS;
+
+/** Red once the deadline has passed; amber from `warningDays` before it; nothing before that or without a deadline. */
+export function deadlineLevel(i: QuestItem, today: LocalDate): DeadlineLevel | undefined {
+  const d = questDeadline(i, today);
+  if (!d) return undefined;
+  if (d < today) return i.undated ? undefined : 'overdue';
+  return d <= addPeriod(today, 'day', warningDays(i.task)) ? 'soon' : undefined;
+}
+
+/**
+ * The last day an open quest can be done on time: the end date of a date range, the end of the
+ * active period for an unfinished repeating quota, otherwise the occurrence's due date.
+ * Undefined when there is nothing left to do (a quota already met) or the quest has no due date.
+ */
+export function questDeadline(i: QuestItem, today: LocalDate): LocalDate | undefined {
+  const { task, occurrence: o, quota } = i;
+  if (i.undated) {
+    // A repeating quest without a due date: the end of the current period is the last chance this
+    // time round. Done for this period (waiting for the next one) or daily: no deadline.
+    if (!canWarn(task) || !quota || !isQuota(task.recurrence) || o.scheduledFor > today || quota.done >= quota.times) return undefined;
+    return periodContaining(task.recurrence, task.dueAt, today).end;
+  }
+  if (task.window) return quota && quota.done >= quota.times ? undefined : task.window.end;
+  if (quota && isQuota(task.recurrence)) {
+    // Target met: the quest waits for its next period, whose end is the next deadline.
+    if (o.scheduledFor > today) return periodContaining(task.recurrence, task.dueAt, o.scheduledFor).end;
+    return quota.done >= quota.times ? undefined : periodContaining(task.recurrence, task.dueAt, today).end;
+  }
+  return o.scheduledFor;
+}
+
+export interface DeadlineWarning {
+  /** The worse state across open side quests; red wins over amber. */
+  level?: DeadlineLevel;
+  /** Open side quests whose deadline has passed. */
+  overdue: number;
+  /** Open side quests inside their warning period. */
+  soon: number;
+}
+
+/** The Side quests tab indicator. Completed and archived quests are ignored (only open, active ones count). */
+export function sideQuestWarning(s: Snapshot, today: LocalDate): DeadlineWarning {
+  let overdue = 0;
+  let soon = 0;
+  for (const i of sideQuests(s, today)) {
+    if (i.warning === 'overdue') overdue++;
+    else if (i.warning === 'soon') soon++;
+  }
+  return { level: overdue ? 'overdue' : soon ? 'soon' : undefined, overdue, soon };
 }

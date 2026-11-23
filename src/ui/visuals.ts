@@ -2,7 +2,7 @@ import { format } from 'date-fns';
 
 import { fromLocalDate } from '@/domain/dates';
 import type { GoalHealth } from '@/domain/goal-insights';
-import type { RecurrenceRule, Snapshot, TaskDefinition } from '@/domain/types';
+import type { RecurrenceRule, TaskDefinition } from '@/domain/types';
 
 import type { CardTone, ChipTone, IconName } from './components';
 
@@ -24,20 +24,6 @@ export function recurrenceWord(rule: RecurrenceRule | undefined): string {
 export function taskRepeatWord(task: TaskDefinition): string {
   if (task.window) return `${task.window.times}× by ${format(fromLocalDate(task.window.end), 'd MMM')}`;
   return recurrenceWord(task.recurrence);
-}
-
-/** Row meta line: "Daily quest · Run a half marathon" (spec §03 task cards). */
-export function questContext(s: Snapshot, task: TaskDefinition): string {
-  const kind =
-    task.taskType === 'side'
-      ? 'Side quest'
-      : task.window
-        ? `Quest · ${taskRepeatWord(task)}`
-        : task.recurrence?.timesPerPeriod
-        ? `Quest · ${recurrenceWord(task.recurrence)}`
-        : `${recurrenceWord(task.recurrence)} quest`;
-  const goal = task.goalId ? s.goals.find((g) => g.id === task.goalId)?.title : undefined;
-  return goal ? `${kind} · ${goal}` : kind;
 }
 
 /** "see you in two months" / "see you tomorrow" for side-quest completion copy (spec §08). */

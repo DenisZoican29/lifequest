@@ -1,11 +1,13 @@
+import { format } from 'date-fns';
 import { router, Stack, useLocalSearchParams } from 'expo-router';
 import { useState } from 'react';
-import { View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import {
   archiveTask,
-  completeOccurrence,
   createTask,
+  MAX_REWARD_COINS,
+  MAX_SNOOZE_DAYS,
   nextDueOf,
   restoreTask,
   skipOccurrence,
@@ -13,18 +15,31 @@ import {
   updateTask,
   type TaskInput,
 } from '@/domain/commands';
-import { formatFriendly } from '@/domain/dates';
-import type { ChangeSet, Snapshot, TaskType } from '@/domain/types';
-import type { Clock } from '@/domain/dates';
+import { addPeriod, daysBetween, fromLocalDate, isLocalDate, type Clock } from '@/domain/dates';
+import { questIconPreset, type QuestIcon } from '@/domain/quest-mark';
+import { canWarn, isUndated } from '@/domain/recurrence';
+import { isQuestColor, type ChangeSet, type QuestColor, type Snapshot, type TaskType } from '@/domain/types';
 import { quotaProgress } from '@/domain/selectors';
 import { useStore, useToday } from '@/state/store';
-import { Button, Card, Chip, ConfirmDialog, Field, Row, Screen, Segmented, StatusChip, T } from '@/ui/components';
-import { DateField } from '@/ui/date-field';
+import { Button, Card, ConfirmDialog, DisclosureCard, DisclosureRow, Field, FormFooter, Ionicons, Row, Screen, Segmented, T, type ChipTone, type IconName } from '@/ui/components';
+import { CalendarDateField, NoDueDateField } from '@/ui/date-field';
+import { DatePickerDialog } from '@/ui/date-range-dialog';
+import { QuestMark } from '@/ui/goal-mark';
+import { GoalSelect } from '@/ui/goal-select';
+import { QuestAppearancePicker } from '@/ui/quest-appearance-picker';
+import { completeQuest } from '@/ui/quest-completion';
 import { quotaChip } from '@/ui/quest-row';
 import { NotDoneSheet } from '@/ui/not-done-sheet';
+import { NumberWheel } from '@/ui/number-wheel';
 import { isDates, RepeatPicker, repeatFromRule, ruleFromRepeat, windowFromRepeat } from '@/ui/repeat-picker';
-import { font, space, usePalette } from '@/ui/theme';
+import { radius, space, usePalette } from '@/ui/theme';
 import { toast } from '@/ui/toast';
+import { WarningPicker, warningLabel } from '@/ui/warning-picker';
+
+/** The reward wheel moves in fives: 0, 5, 10 … 50. */
+const REWARD_STEP = 5;
+
+const dayLabel = (day: string) => format(fromLocalDate(day), 'd MMM yyyy');
 
 export default function TaskForm() {
   const p = usePalette();
@@ -39,12 +54,21 @@ export default function TaskForm() {
   const [description, setDescription] = useState(existing?.description ?? '');
   const [dueAt, setDueAt] = useState(existing?.window ? existing.window.start : existing ? nextDueOf(s, existing) : today);
   const [repeat, setRepeat] = useState(() => repeatFromRule(existing?.recurrence, existing?.window));
+  // The due date is optional for one-off and repeating quests, and new ones start without one (addendum A4 §4).
+  const [noDate, setNoDate] = useState(existing ? !!existing.noDueDate : true);
   const [notDone, setNotDone] = useState(false);
-  const [coins, setCoins] = useState(String(existing?.rewardCoins ?? 10));
+  const [snoozeOpen, setSnoozeOpen] = useState(false);
+  // Rewards come in steps of 5 up to the cap; an older quest's odd or larger amount snaps to the nearest step.
+  const [coins, setCoins] = useState(Math.min(MAX_REWARD_COINS, Math.round((existing?.rewardCoins ?? 10) / REWARD_STEP) * REWARD_STEP));
   const [goalId, setGoalId] = useState<string | undefined>(existing?.goalId ?? params.goalId);
+  const [icon, setIcon] = useState<QuestIcon | undefined>(() => questIconPreset(existing?.icon)?.key);
+  const [color, setColor] = useState<QuestColor | undefined>(isQuestColor(existing?.color) ? existing.color : undefined);
   const [reminder, setReminder] = useState<number | undefined>(existing?.reminderDaysBefore);
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [more, setMore] = useState(false);
+  const [reminderOpen, setReminderOpen] = useState(false);
+  const [activityOpen, setActivityOpen] = useState<boolean>();
 
   if (params.id && !existing) {
     return (
@@ -57,19 +81,38 @@ export default function TaskForm() {
   const goals = s.goals.filter((g) => g.status === 'active' || g.id === goalId);
   const isSide = taskType === 'side';
   const quota = existing ? quotaProgress(s, existing, today) : undefined;
+  const coinWord = coins === 0 ? 'No reward' : `${coins} coin${coins === 1 ? '' : 's'}`;
+  // Every 1 day is always available each day; a date range always has dates; otherwise the date is optional.
+  const daily = !isDates(repeat) && isUndated({ recurrence: ruleFromRepeat(repeat) });
+  const noDueDate = !isDates(repeat) && !daily && noDate;
+  const undated = noDueDate || daily;
+  // Side quests can warn before a due date, or before the end of each period when repeating without one.
+  const warns = isSide && canWarn({ recurrence: ruleFromRepeat(repeat), window: isDates(repeat) ? { start: '', end: '', times: 1 } : undefined, noDueDate });
+  const wasUndated = !!existing && isUndated(existing);
 
   const save = async () => {
     if (saving) return;
+    if (warns && reminder !== undefined && Number.isNaN(reminder)) {
+      return toast('Enter how many days or weeks before the deadline to warn.', 'error');
+    }
+    // Undated quests become available today; a daily quest already done today stays on tomorrow.
+    const nextDue = existing ? nextDueOf(s, existing) : today;
+    // A repeating quest already done this period keeps waiting for the next one.
+    const keepNext = wasUndated && (nextDue <= today || repeat.mode === 'repeating');
+    const due = undated ? (keepNext ? nextDue : today) : dueAt;
     const input: TaskInput = {
       title,
       description,
       taskType,
       goalId: isSide ? undefined : goalId,
-      rewardCoins: coins.trim() === '' ? 0 : Number(coins),
-      dueAt,
+      icon: icon ?? null,
+      color: color ?? null,
+      rewardCoins: coins,
+      dueAt: due,
       recurrence: ruleFromRepeat(repeat),
       window: windowFromRepeat(repeat, dueAt),
-      reminderDaysBefore: isSide ? reminder : undefined,
+      noDueDate,
+      reminderDaysBefore: warns ? reminder : undefined,
     };
     setSaving(true);
     const res = await run((st, c) => (existing ? updateTask(st, c, existing.id, input) : createTask(st, c, input)));
@@ -88,169 +131,198 @@ export default function TaskForm() {
     const res = await run(cmd);
     setSaving(false);
     if (!res.ok) return toast(res.message, 'error');
-    toast(message, message.includes('coins') ? 'coin' : 'success');
+    toast(message);
     if (close) router.back();
   };
 
+  const markDone = async (occurrenceId: string) => {
+    if (saving) return;
+    setSaving(true);
+    const completed = await completeQuest(occurrenceId);
+    setSaving(false);
+    if (completed) router.back();
+  };
+
   const archive = async () => {
-    if (!existing) return;
+    if (!existing || saving) return;
+    setSaving(true);
     const res = await run((st, c) => archiveTask(st, c, existing.id));
+    setSaving(false);
     setConfirmArchive(false);
     if (!res.ok) return toast(res.message, 'error');
     toast('Quest archived — history kept');
     router.back();
   };
 
-  return (
-    <Screen edges={['bottom']}>
-      <Stack.Screen options={{ title: existing ? 'Edit quest' : isSide ? 'New side quest' : 'New quest' }} />
+  const titleField = <Field label="Title" value={title} onChangeText={setTitle} placeholder={isSide ? 'e.g. Clean the oven' : 'e.g. Study 30 minutes'} />;
+  const descriptionField = <Field label="Description (optional)" value={description} onChangeText={setDescription} placeholder="Optional details" multiline />;
+  const appearance = { title, taskType, goalId: isSide ? undefined : goalId, icon, color };
+  const hasWindow = isDates(repeat);
+  const startsOn = hasWindow || (!existing && repeat.mode === 'repeating' && repeat.times !== '1');
+  const dateLabel = startsOn ? 'Start date' : existing ? 'Next due date' : 'Due date';
+  const rewardFields = (
+    <View style={styles.rewardRow}>
+      <View style={styles.grow}>
+        <T kind="bodyStrong">Coins per completion</T>
+        <T kind="small">{isSide ? `Optional for side quests. 0 to ${MAX_REWARD_COINS}.` : `Paid each time you complete it. Up to ${MAX_REWARD_COINS}.`}</T>
+      </View>
+      <NumberWheel label="Coin reward" value={coins} min={0} max={MAX_REWARD_COINS} step={REWARD_STEP} onChange={setCoins} />
+    </View>
+  );
 
-      {existing && (
-        <Card>
-          <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>Status</T>
-          {!existing.active ? (
-            <>
-              <Row style={{ flexWrap: 'wrap' }}>
-                <StatusChip tone="plain" label="Archived" />
-              </Row>
-              <T kind="small">Restoring adds it back to your quests, due {formatFriendly(existing.dueAt > today ? existing.dueAt : today, today)}.</T>
-              <Button title="Restore quest" icon="refresh" disabled={saving} onPress={() => act((st, c) => restoreTask(st, c, existing.id), 'Quest restored', true)} />
-            </>
-          ) : open ? (
-            <>
-              <Row style={{ flexWrap: 'wrap' }}>
-                {quota ? (
-                  <>
-                    <StatusChip {...quotaChip(quota)} />
-                    {open.scheduledFor > today && (
-                      <StatusChip tone="neutral" label={`${existing.window ? 'Starts' : 'Next'} ${formatFriendly(open.scheduledFor, today)}`} />
-                    )}
-                  </>
-                ) : (
-                  <StatusChip
-                    tone={open.scheduledFor < today ? 'overdue' : open.scheduledFor === today ? 'due' : 'neutral'}
-                    label={open.scheduledFor < today ? 'Overdue' : `Open · ${formatFriendly(open.scheduledFor, today)}`}
-                  />
-                )}
-              </Row>
-              {quota?.missed && (
-                <>
-                  <T kind="small">The end date passed before you reached {quota.times}.</T>
-                  <Button title="Give it more time or delete" icon="calendar-outline" onPress={() => setNotDone(true)} />
-                </>
-              )}
-              {!quota?.missed && !(existing.window && open.scheduledFor > today) && (
-                <Button
-                  title="Mark done"
-                  icon="checkmark"
-                  kind="secondary"
-                  disabled={saving}
-                  onPress={() =>
-                    act(
-                      (st, c) => completeOccurrence(st, c, open.id),
-                      existing.rewardCoins > 0 ? `Nice work! +${existing.rewardCoins} coins` : 'Nice work!',
-                      true,
-                    )
-                  }
-                />
-              )}
-              {!existing.window && (
-                <Row style={{ flexWrap: 'wrap' }}>
-                  {[1, 3, 7].map((d) => (
-                    <Chip
-                      key={d}
-                      icon="time-outline"
-                      label={d === 1 ? 'Tomorrow' : `In ${d} days`}
-                      onPress={() => act((st, c) => snoozeOccurrence(st, c, open.id, d), d === 1 ? 'Moved to tomorrow' : `Moved ${d} days ahead`, true)}
-                    />
-                  ))}
-                  {existing.recurrence && (
-                    <Chip
-                      icon="play-skip-forward-outline"
-                      label={quota ? `Skip rest of ${quota.periodLabel}` : 'Skip this time'}
-                      onPress={() => act((st, c) => skipOccurrence(st, c, open.id), quota ? 'Skipped until the next period' : 'Skipped · no coins', true)}
-                    />
-                  )}
-                </Row>
-              )}
-            </>
-          ) : (
-            <>
-              <Row style={{ flexWrap: 'wrap' }}>
-                <StatusChip tone="done" label="Completed" />
-              </Row>
-              <T kind="small">Completions are final, so coins are only ever paid once.</T>
-            </>
-          )}
-        </Card>
-      )}
+  const selectedGoal = goals.find((goal) => goal.id === goalId);
+  const status: { tone: ChipTone; label: string } = !existing?.active
+    ? { tone: 'plain', label: 'Archived' }
+    : !open ? { tone: 'done', label: 'Completed' }
+    : quota ? quotaChip(quota)
+    : wasUndated ? { tone: 'neutral', label: open.scheduledFor > today ? `Available from ${dayLabel(open.scheduledFor)}` : 'Available · No due date' }
+    : open.scheduledFor < today ? { tone: 'overdue', label: 'Overdue' }
+    : { tone: 'neutral', label: `Due · ${dayLabel(open.scheduledFor)}` };
+  const next = open && quota && open.scheduledFor > today
+    ? `${existing?.window ? 'Starts' : 'Next'} · ${dayLabel(open.scheduledFor)}`
+    : undefined;
+  const activityExpanded = activityOpen ?? (existing?.active === false || !!quota?.missed);
+  const questTypeLabel = isSide ? 'side quest' : 'quest';
+
+  return (
+    <Screen
+      edges={['bottom']}
+      footer={(
+        <FormFooter>
+          <Button title={saving ? 'Saving…' : existing ? 'Save changes' : `Add ${questTypeLabel}`} icon={existing ? 'checkmark' : 'add'} onPress={save} disabled={saving} />
+        </FormFooter>
+      )}>
+      <Stack.Screen options={{ title: `${existing ? 'Edit' : 'New'} ${questTypeLabel}` }} />
       {!existing && (
         <Segmented
           value={taskType}
           onChange={setTaskType}
-          options={[
-            { value: 'main', label: 'Quest' },
-            { value: 'side', label: 'Side quest' },
-          ]}
+          options={[{ value: 'main', label: 'Quest' }, { value: 'side', label: 'Side quest' }]}
         />
       )}
-      <T kind="small">
-        {isSide
-          ? 'Side quests are chores and maintenance with deadlines. They stay separate from your roadmap.'
-          : 'Quests are tasks you complete to earn coins. Link one to a goal to move its progress.'}
-      </T>
 
-      <Field label="Title" value={title} onChangeText={setTitle} placeholder={isSide ? 'e.g. Clean the oven' : 'e.g. Study 30 minutes'} />
-      <Field label="Description" value={description} onChangeText={setDescription} placeholder="Optional details" multiline />
+      <Card style={styles.section}>
+        <EditHeading title="Quest details" icon="reader" tone="lavender" />
+        {titleField}
+        {descriptionField}
+        {!isSide && (
+          <GoalSelect
+            goals={goals}
+            value={goalId}
+            onChange={setGoalId}
+            leading={selectedGoal ? <QuestMark task={{ taskType, goalId: selectedGoal.id }} size={36} /> : <EditIcon icon="flag" tone="mint" />}
+          />
+        )}
+        <QuestAppearancePicker
+          task={appearance}
+          onChange={(next) => {
+            setIcon(next.icon);
+            setColor(next.color);
+          }}
+        />
+      </Card>
 
-      <DateField
-        label={isDates(repeat) ? 'Start date' : existing ? 'Next due date' : repeat.mode === 'custom' && repeat.times !== '1' ? 'Start date' : 'Due date'}
-        value={dueAt}
-        onChange={setDueAt}
-        today={today}
-      />
+      <Card style={styles.section}>
+        <EditHeading title="Schedule" icon="calendar-number" tone="sky" />
+        <RepeatPicker value={repeat} onChange={setRepeat} allowDateRange />
+        {daily ? (
+          <NoDueDateField label="Due date" note="Available every day. A missed day never becomes overdue." />
+        ) : !hasWindow ? (
+          <CalendarDateField
+            label={repeat.mode === 'once' ? 'Due date' : dateLabel}
+            value={noDate ? '' : dueAt}
+            onChange={(day) => {
+              setDueAt(day);
+              setNoDate(false);
+            }}
+            onClear={() => setNoDate(true)}
+            today={today}
+          />
+        ) : (
+          <CalendarDateField label={dateLabel} value={dueAt} onChange={setDueAt} today={today} />
+        )}
+        {hasWindow && (
+          <CalendarDateField
+            label="End date"
+            value={repeat.end ?? ''}
+            minDate={isLocalDate(dueAt) ? dueAt : undefined}
+            onChange={(day) => setRepeat((draft) => ({ ...draft, end: day }))}
+            today={today}
+          />
+        )}
+        {/* Shown when there's a deadline to count back from: a due date, or the end of each period for a repeating quest. */}
+        {warns && (
+          <DisclosureCard
+            title="Deadline warning"
+            summary={reminder !== undefined && Number.isNaN(reminder) ? 'Not set yet' : warningLabel(reminder)}
+            leading={<EditIcon icon="warning-outline" tone="sky" />}
+            expanded={reminderOpen}
+            onPress={() => setReminderOpen((value) => !value)}>
+            <WarningPicker
+              value={reminder}
+              onChange={setReminder}
+              deadline={noDueDate ? `the end of ${periodPhrase(repeat.every, repeat.unit).replace(/^each|^in each/, 'each')}` : 'the deadline'}
+            />
+          </DisclosureCard>
+        )}
+      </Card>
 
-      <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>Repeat</T>
-      <RepeatPicker value={repeat} onChange={setRepeat} start={dueAt} today={today} />
+      <Card>
+        <DisclosureRow title="Reward" summary={coinWord} leading={<EditIcon icon="wallet" tone="mint" />} expanded={more} onPress={() => setMore((value) => !value)} />
+        {more && rewardFields}
+      </Card>
 
-      <View style={{ marginTop: space.md }}>
-        <Field label="Coin reward" value={coins} onChangeText={setCoins} numeric hint={isSide ? 'Optional for side quests — 0 is fine.' : 'Paid once per completed occurrence.'} />
-        <Row style={{ flexWrap: 'wrap', marginTop: -space.xs }}>
-          {[0, 5, 10, 20, 50].map((n) => (
-            <Chip key={n} label={`${n}`} selected={coins === String(n)} onPress={() => setCoins(String(n))} />
-          ))}
-        </Row>
-      </View>
-
-      {isSide ? (
-        <View style={{ gap: space.sm, marginTop: space.md }}>
-          <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>In-app reminder</T>
-          <Row style={{ flexWrap: 'wrap' }}>
-            {[undefined, 1, 3, 7, 14].map((d) => (
-              <Chip key={String(d)} label={d === undefined ? 'Off' : `${d} day${d > 1 ? 's' : ''} before`} selected={reminder === d} onPress={() => setReminder(d)} />
-            ))}
-          </Row>
-        </View>
-      ) : (
-        <View style={{ gap: space.sm, marginTop: space.md }}>
-          <T kind="small" color={p.ink} style={{ fontFamily: font.bold }}>Goal</T>
-          {goals.length === 0 ? (
-            <T kind="small">No goals yet — create one on the Roadmap to link quests to it.</T>
-          ) : (
-            <Row style={{ flexWrap: 'wrap' }}>
-              <Chip label="None" selected={!goalId} onPress={() => setGoalId(undefined)} />
-              {goals.map((g) => (
-                <Chip key={g.id} label={g.title} selected={goalId === g.id} onPress={() => setGoalId(g.id)} />
-              ))}
-            </Row>
-          )}
-        </View>
-      )}
-
-      <Button title={saving ? 'Saving…' : existing ? 'Save changes' : isSide ? 'Add side quest' : 'Add quest'} onPress={save} disabled={saving} style={{ marginTop: space.lg }} />
-      {existing && existing.active && (
-        <Button title="Archive quest" kind="tertiary" onPress={() => setConfirmArchive(true)} />
-      )}
+      {existing && <Card>
+        <DisclosureRow
+          title="Quest activity"
+          summary={next ? `${status.label} · ${next}` : status.label}
+          summaryColor={status.tone === 'overdue' ? p.roseInk : status.tone === 'done' ? p.forest : undefined}
+          leading={<EditIcon icon="pulse" tone="mint" />}
+          expanded={activityExpanded}
+          onPress={() => setActivityOpen(!activityExpanded)}
+        />
+        {activityExpanded && (
+          <View style={[styles.activity, { borderColor: p.border }]}>
+            {!existing.active ? (
+              <>
+                <T kind="small">Restoring adds it back to your quests. Due {dayLabel(existing.dueAt > today ? existing.dueAt : today)}.</T>
+                <Button title="Restore quest" icon="refresh" kind="secondary" compact disabled={saving} onPress={() => act((st, c) => restoreTask(st, c, existing.id), 'Quest restored', true)} />
+              </>
+            ) : open ? (
+              <>
+                {quota?.missed ? (
+                  <Button title="Give it more time or delete" icon="calendar-outline" kind="secondary" compact onPress={() => setNotDone(true)} />
+                ) : !(existing.window && open.scheduledFor > today) && (
+                  <Button
+                    title="Mark done"
+                    icon="checkmark"
+                    kind="secondary"
+                    compact
+                    disabled={saving}
+                    onPress={() => void markDone(open.id)}
+                  />
+                )}
+                {!existing.window && (
+                  <>
+                    {!wasUndated && <Button title="Move this occurrence" icon="calendar-outline" kind="tertiary" compact disabled={saving} onPress={() => setSnoozeOpen(true)} />}
+                    {existing.recurrence && (
+                      <Button
+                        title={quota ? `Skip rest of ${quota.periodLabel}` : 'Skip this time'}
+                        icon="play-skip-forward-outline"
+                        kind="tertiary"
+                        compact
+                        disabled={saving}
+                        onPress={() => act((st, c) => skipOccurrence(st, c, open.id), quota ? 'Skipped until the next period' : 'Skipped · no coins', true)}
+                      />
+                    )}
+                  </>
+                )}
+              </>
+            ) : null}
+            {existing.active && <Button title="Archive quest" icon="archive-outline" kind="tertiary" compact disabled={saving} onPress={() => setConfirmArchive(true)} />}
+          </View>
+        )}
+      </Card>}
 
       <ConfirmDialog
         visible={confirmArchive}
@@ -258,10 +330,71 @@ export default function TaskForm() {
         body="Open occurrences are removed. Completed history and earned coins stay."
         confirmLabel="Archive"
         kind="danger"
+        busy={saving}
         onConfirm={archive}
         onCancel={() => setConfirmArchive(false)}
       />
+      {snoozeOpen && open && (
+        <DatePickerDialog
+          title="Move this occurrence"
+          today={today}
+          selected={open.scheduledFor}
+          minDate={addPeriod(today, 'day', 1)}
+          maxDate={addPeriod(today, 'day', MAX_SNOOZE_DAYS)}
+          onClose={() => setSnoozeOpen(false)}
+          onSelect={(day) => {
+            setSnoozeOpen(false);
+            void act((st, c) => snoozeOccurrence(st, c, open.id, daysBetween(c.today(), day)), `Moved to ${dayLabel(day)}`, true);
+          }}
+        />
+      )}
       {notDone && existing && <NotDoneSheet task={existing} onClose={() => setNotDone(false)} />}
     </Screen>
   );
 }
+
+/** "each week", "in each 2-week period". */
+function periodPhrase(every: string, unit: string): string {
+  return every === '1' || every === '' ? `each ${unit}` : `in each ${every}-${unit} period`;
+}
+
+type EditIconTone = 'lavender' | 'sky' | 'mint';
+
+function EditIcon({ icon, tone }: { icon: IconName; tone: EditIconTone }) {
+  const p = usePalette();
+  const { ink, fill } = {
+    lavender: { ink: p.questColors.purple, fill: p.lavender },
+    sky: { ink: p.questColors.blue, fill: p.sky },
+    mint: { ink: p.forest, fill: p.mint },
+  }[tone];
+  return (
+    <View aria-hidden style={[styles.iconTile, { backgroundColor: `${ink}35` }]}>
+      <View style={[styles.iconFace, { backgroundColor: fill, borderColor: `${ink}28` }]}>
+        <View style={[styles.iconHighlight, { backgroundColor: p.surface }]} />
+        <Ionicons name={icon} size={20} color={ink} />
+      </View>
+    </View>
+  );
+}
+
+function EditHeading({ title, icon, tone }: { title: string; icon: IconName; tone: EditIconTone }) {
+  return (
+    <Row gap={space.md}>
+      <EditIcon icon={icon} tone={tone} />
+      <T kind="h3" accessibilityRole="header" style={styles.grow}>{title}</T>
+    </Row>
+  );
+}
+
+const styles = StyleSheet.create({
+  section: { gap: space.md },
+  iconTile: { width: 36, height: 36, borderRadius: radius.sm },
+  iconFace: {
+    position: 'absolute', top: 0, bottom: 2, left: 0, right: 0, overflow: 'hidden',
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderRadius: radius.sm,
+  },
+  iconHighlight: { position: 'absolute', width: 43, height: 18, top: -8, left: -4, borderRadius: radius.pill, transform: [{ rotate: '-20deg' }], opacity: 0.3 },
+  grow: { flex: 1 },
+  rewardRow: { flexDirection: 'row', alignItems: 'center', gap: space.md, marginTop: space.sm },
+  activity: { borderTopWidth: 1, paddingTop: space.md, gap: space.sm },
+});

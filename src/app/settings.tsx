@@ -7,9 +7,9 @@ import { enabledApps } from '@/domain/economy';
 import { storageIsDurable, useStore } from '@/state/store';
 import { AppPicker, type PickedApp } from '@/ui/app-picker';
 import { Button, Card, ConfirmDialog, Field, Row, Screen, SectionLabel, Segmented, DemoBanner, T } from '@/ui/components';
-import { space } from '@/ui/theme';
 import { toast } from '@/ui/toast';
 
+/** Settings (addendum A4 §5): Appearance, Screen time (allowance, apps, prices) and Data. */
 export default function Settings() {
   const s = useStore((st) => st.snapshot);
   const run = useStore((st) => st.run);
@@ -52,8 +52,10 @@ export default function Settings() {
         ]}
       />
 
-      <SectionLabel>Daily allowance</SectionLabel>
+      <SectionLabel>Screen time</SectionLabel>
+      <DemoBanner compact />
       <Card>
+        <T kind="bodyStrong">Daily allowance</T>
         <Field
           label="Free minutes per day"
           value={minutes}
@@ -61,20 +63,20 @@ export default function Settings() {
           numeric
           hint="Shared by all restricted apps. Changes apply to today immediately."
         />
-        <Button title="Save allowance" onPress={saveMinutes} />
+        <Button title="Save allowance" kind="secondary" compact onPress={saveMinutes} style={{ alignSelf: 'flex-start' }} />
       </Card>
 
-      <SectionLabel>Restricted apps</SectionLabel>
       <Card>
+        <T kind="bodyStrong">Restricted apps</T>
         <AppPicker value={apps} onChange={setApps} known={known} />
         <T kind="small">
           Removing an app stops tracking it from now on. Minutes it already used today still count — time is never refunded.
         </T>
-        <Button title="Save apps" onPress={saveApps} />
+        <Button title="Save apps" kind="secondary" compact onPress={saveApps} style={{ alignSelf: 'flex-start' }} />
       </Card>
 
-      <SectionLabel>Time pack prices</SectionLabel>
       <Card>
+        <T kind="bodyStrong">Time pack prices</T>
         {offers.map((o, i) => (
           <Row key={o.id} style={{ alignItems: 'flex-start' }}>
             <View style={{ flex: 1 }}>
@@ -85,14 +87,7 @@ export default function Settings() {
             </View>
           </Row>
         ))}
-        <Button title="Save prices" kind="primary" onPress={saveOffers} />
-      </Card>
-
-      <SectionLabel>Reminders</SectionLabel>
-      <Card>
-        <T kind="muted">
-          Side quests can show an in-app reminder a few days before they are due (set per side quest). System push notifications come with the phone app.
-        </T>
+        <Button title="Save prices" kind="secondary" compact onPress={saveOffers} style={{ alignSelf: 'flex-start' }} />
       </Card>
 
       <SectionLabel>Data</SectionLabel>
@@ -102,12 +97,9 @@ export default function Settings() {
             ? 'Everything is stored only in this browser (IndexedDB). Clearing site data erases it. Nothing is sent to a server.'
             : 'This build keeps data in memory only — it will be lost when the app closes.'}
         </T>
-        <Button title="Erase all data" kind="danger" icon="trash-outline" onPress={() => setConfirmErase(true)} />
+        <T kind="small">Each side quest has a deadline warning (1 day before unless you change it, e.g. 2 weeks for an oil change). The warning icon appears on Today and Quests from then on. Push notifications come with the phone app.</T>
       </Card>
-
-      <View style={{ marginTop: space.md }}>
-        <DemoBanner />
-      </View>
+      <Button title="Erase all data" kind="danger" icon="trash-outline" onPress={() => setConfirmErase(true)} />
 
       <ConfirmDialog
         visible={confirmErase}

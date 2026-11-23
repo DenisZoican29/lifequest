@@ -14,9 +14,9 @@ A1 makes the roadmap a list of **end goals**: things you want to reach by a date
 
 | ID | Requirement |
 |---|---|
-| FR-01a | Create, edit, archive and view end goals. A goal has a title, an optional *why it matters* text, and a **required deadline** (today or later when set or changed). |
+| FR-01a | Create, edit, archive and view end goals. A goal has a title, an optional *why it matters* text, and an **optional deadline** (today or later when set or changed; optional since 23 Nov 2026, see [A4](spec-app-redesign.md)). |
 | FR-02a | Goals no longer have a cadence. Main quests (one-off or repeating, including *N times per period*) link to a goal through the quest's **Goal** field. Side quests still cannot link (FR-09, FR-12 unchanged). |
-| FR-03a | Each active goal shows a **status** computed from its linked quests (§3), a **deadline countdown** and **time used** (start to deadline). |
+| FR-03a | Each active goal shows a **status** computed from its linked quests (§3) and, when it has a deadline, a **deadline countdown** and **time used** (start to deadline). |
 | FR-03b | The goal page shows **perseverance**: a week streak, best streak, quests done, days you showed up, coins earned, a week-by-week chart and a day-by-day activity grid (§5). |
 | FR-04a | The roadmap lists every goal as a card, sorted by deadline, filtered by *Active / Reached / Archived*. It also says how many active main quests aren't linked to any goal. |
 | FR-04b | Milestones remain as optional **checkpoints** inside a goal. They no longer drive status. |
@@ -93,21 +93,22 @@ The copy stays calm, following the design spec's "a cozy quest journal, not a pu
 ### 4.2 New / edit goal
 
 - Fields: **Goal** (e.g. *Get a new job*), **Why it matters (optional)**, **Deadline** (text date plus *In 1 month / 3 months / 6 months / 1 year* shortcuts).
-- **Create goal** is disabled until there is a title and a deadline.
+- **Create goal** is disabled until there is a title (the deadline is optional).
 - After creating, the app opens the new goal's page, so the next step (adding a quest) is right there.
 
 ### 4.3 Goal page
 
 From top to bottom:
 
-1. **Hero card**, tinted by status: *End goal* eyebrow, status chip, title, why-it-matters text, a 96 px consistency ring with the status message, the deadline date, the countdown, a time-used bar and the start date.
+1. **Goal header**: goal icon or initials, title and optional description sit above a separate progress card. The card groups the consistency ring and status in one row and the deadline, countdown and start date in another.
 2. If there's no deadline (goals from v0.1): **Set a deadline**. If the deadline has passed: **Mark reached / New deadline**.
-3. **Perseverance** (only once there's history): four tiles: *Week streak* (best streak below), *Quests done*, *Days you showed up*, *Coins earned*. A note explains the streak rule.
-4. **Week by week**: one bar per week (from the goal's first week, at least 6 and at most 12) showing the share of the plan kept, a dashed *On track (80%)* line and a recessive baseline. Tap a bar to read it (*Week of 9 Nov · Kept 83% of the plan*, or *Nothing was due*). The selected bar is full strength and the others are lighter.
-5. **Days you showed up**: a 12-week × 7-day grid (Monday at the top) with one green ramp, light to dark for 0, 1, 2, 3 and 4+ quests done. Days before the goal began are outlined and empty, not grey. It has a *Less → More* legend. Tap a day to read it.
-6. **Linked quests** (with **+ Quest**): each active linked quest's row, ticked or swiped exactly as on the Quests tab, plus *Last 4 weeks · 11 of 12 kept* and a thin bar. With no quests, a card *What will move this goal forward?* gives examples and **Add a quest**.
-7. **Checkpoints (optional)**: the existing milestone path, with *2 of 4 done*.
-8. **Goal status** buttons: *Mark goal reached*, *Reopen goal*, *Archive goal*.
+3. **Quest breakdown** appears when the goal has a linked main quest to show. It lists each quest by name, sorted by completions, with an exact count and a bar showing its share of the goal's completions in the selected range. **All time** is the default. **Last 4 weeks** uses the most recent 28 calendar days, including today. Active quests remain visible at zero, and archived quests remain visible if they have completion history.
+4. **Perseverance** (only once there's history): four tiles: *Week streak* (best streak below), *Quests done*, *Days you showed up*, *Coins earned*. A note explains the streak rule.
+5. **Week by week**: one bar per week (from the goal's first week, at least 6 and at most 12) showing the share of the plan kept, a dashed *On track (80%)* line and a recessive baseline. Tap a bar to read it (*Week of 9 Nov · Kept 83% of the plan*, or *Nothing was due*). The selected bar is full strength and the others are lighter.
+6. **Days you showed up**: a 12-week × 7-day grid (Monday at the top) with one green ramp, light to dark for 0, 1, 2, 3 and 4+ quests done. Days before the goal began are outlined and empty, not grey. It has a *Less → More* legend. Tap a day to read it.
+7. **Linked quests** (with **+ Quest**): each active linked quest's row, ticked or swiped exactly as on the Quests tab, plus *Last 4 weeks · 11 of 12 kept* and a thin bar. With no quests, a card *What will move this goal forward?* gives examples and **Add a quest**.
+8. **Checkpoints (optional)**: the existing milestone path, with *2 of 4 done*.
+9. **Goal status** buttons: *Mark goal reached*, *Reopen goal*, *Archive goal*.
 
 ### 4.4 Streak rule
 

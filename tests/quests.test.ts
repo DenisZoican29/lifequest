@@ -11,6 +11,7 @@ import {
   skipOccurrence,
   snoozeOccurrence,
   toggleMilestone,
+  updateTask,
 } from '../src/domain/commands';
 import { coinBalance } from '../src/domain/economy';
 import { nextDueDate, periodContaining } from '../src/domain/recurrence';
@@ -36,6 +37,21 @@ describe('recurrence', () => {
 });
 
 describe('quests', () => {
+  it('stores quest icons and colors independently and supports restoring the default icon', () => {
+    const w = world();
+    const input = { title: 'Read a chapter', description: '', taskType: 'main' as const, rewardCoins: 5, dueAt: w.clock.today() };
+    w.run((s, c) => createTask(s, c, input));
+    const [{ id }] = w.s.tasks;
+
+    w.run((s, c) => updateTask(s, c, id, { ...input, icon: 'reading', color: 'purple' }));
+    w.run((s, c) => updateTask(s, c, id, { ...input, description: 'Read before bed.' }));
+    expect(w.s.tasks[0]).toMatchObject({ icon: 'reading', color: 'purple', description: 'Read before bed.' });
+
+    w.run((s, c) => updateTask(s, c, id, { ...input, icon: null }));
+    expect(w.s.tasks[0].icon).toBeUndefined();
+    expect(w.s.tasks[0].color).toBe('purple');
+  });
+
   it('T-03: a recurring side quest keeps history and schedules the next occurrence', () => {
     const w = world();
     w.run((s, c) =>

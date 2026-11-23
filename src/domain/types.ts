@@ -3,6 +3,8 @@
  * All timestamps are ISO strings; calendar days are local `YYYY-MM-DD` strings.
  */
 
+import type { QuestIcon } from './quest-mark';
+
 export type ISODateTime = string;
 /** Local calendar date, `YYYY-MM-DD`. */
 export type LocalDate = string;
@@ -18,8 +20,12 @@ export interface Goal {
   description: string;
   /** Legacy, see `Cadence`. */
   cadence?: Cadence;
-  /** Required for new goals; goals from v0.1 may not have one. */
+  /** Optional: many goals ("Read more") have no end date. */
   deadline?: LocalDate;
+  /** Optional preset icon key (addendum A3 §6); unset or unknown → initials of the title. */
+  icon?: string;
+  /** Optional chosen colour: an index into the goal colour palette (`GOAL_COLOR_COUNT`). Unset → automatic. */
+  color?: number;
   status: GoalStatus;
   createdAt: ISODateTime;
   updatedAt: ISODateTime;
@@ -54,6 +60,11 @@ export interface RecurrenceRule {
 
 export type TaskType = 'main' | 'side';
 
+export const QUEST_COLORS = ['green', 'blue', 'purple', 'pink', 'orange', 'gold'] as const;
+export type QuestColor = (typeof QUEST_COLORS)[number];
+
+export const isQuestColor = (value: unknown): value is QuestColor => QUEST_COLORS.some((color) => color === value);
+
 /**
  * "N times between two dates" (e.g. 4 times from 20 Nov to 1 Dec). Used instead of `recurrence`.
  * Once `end` passes without reaching `times`, the quest is "not done" until it is rescheduled or deleted.
@@ -70,13 +81,26 @@ export interface TaskDefinition {
   description: string;
   taskType: TaskType;
   goalId?: string;
+  /** Unset uses the linked goal icon or the default mark for the quest type. */
+  icon?: QuestIcon;
+  color?: QuestColor;
   rewardCoins: number;
   recurrence?: RecurrenceRule;
   /** Set for date-range quests; `recurrence` is then unset and `dueAt` equals `window.start`. */
   window?: TargetWindow;
-  /** First due date. */
+  /** First due date (for quests without a due date: the day it became available). */
   dueAt: LocalDate;
-  /** Side quests: show a reminder this many days before the due date (in-app only in the POC). */
+  /**
+   * No due date (addendum A4 §4). A one-off stays available until completed; a repeating quest
+   * can be done any time in each period (its rule is then a times-per-period quota, even for
+   * 1 time). Neither becomes overdue or triggers a reminder or deadline warning. Daily quests are
+   * always undated; see `isUndated`. Never set for date-range quests.
+   */
+  noDueDate?: boolean;
+  /**
+   * Side quests: the warning period, in days. The amber warning appears this many days before the
+   * deadline (unset = 1, "today or tomorrow"; 0 = on the day). In-app only in the POC.
+   */
   reminderDaysBefore?: number;
   active: boolean;
   createdAt: ISODateTime;

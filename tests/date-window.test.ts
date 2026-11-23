@@ -108,6 +108,21 @@ describe('N times between two dates', () => {
     expect(progress(w, t.id)).toMatchObject({ done: 2, times: 3 });
   });
 
+  it('changes or clears a quest color without rescheduling its date range', () => {
+    const w = world();
+    const task = add(w, { color: 'blue' });
+    expect(task.color).toBe('blue');
+    const originalOccurrence = open(w, task.id);
+    w.run((s, c) => shiftDays(s, c, 5));
+    w.run((s, c) => updateTask(s, c, task.id, input({ title: 'Try a new recipe' })));
+    expect(w.s.tasks[0].color).toBe('blue');
+    w.run((s, c) => updateTask(s, c, task.id, input({ color: 'purple' })));
+    expect(w.s.tasks[0].color).toBe('purple');
+    w.run((s, c) => updateTask(s, c, task.id, input({ color: null })));
+    expect(w.s.tasks[0].color).toBeUndefined();
+    expect(open(w, task.id)).toEqual(originalOccurrence);
+  });
+
   it('validates the window', () => {
     const w = world();
     expect(() => add(w, { window: { start: '2026-11-20', end: '2026-11-19', times: 2 } })).toThrow(/on or after/);
@@ -128,7 +143,7 @@ describe('N times between two dates', () => {
 });
 
 describe('repeat picker: between dates', () => {
-  const v = { mode: 'custom' as const, times: '4', every: '1', unit: 'week' as const, anchor: 'completion' as const, span: 'dates' as const, end: '2026-12-01' };
+  const v = { mode: 'repeating' as const, times: '4', every: '1', unit: 'week' as const, anchor: 'completion' as const, span: 'dates' as const, end: '2026-12-01' };
   it('maps to a window instead of a rule', () => {
     expect(ruleFromRepeat(v)).toBeUndefined();
     expect(windowFromRepeat(v, '2026-11-20')).toEqual({ start: '2026-11-20', end: '2026-12-01', times: 4 });
@@ -136,6 +151,6 @@ describe('repeat picker: between dates', () => {
     expect(repeatSummary(v, '2026-11-20')).toBe('4 times between 20 Nov and 1 Dec');
   });
   it('round-trips an existing window', () => {
-    expect(repeatFromRule(undefined, { start: '2026-11-20', end: '2026-12-01', times: 4 })).toMatchObject({ mode: 'custom', span: 'dates', times: '4', end: '2026-12-01' });
+    expect(repeatFromRule(undefined, { start: '2026-11-20', end: '2026-12-01', times: 4 })).toMatchObject({ mode: 'repeating', span: 'dates', times: '4', end: '2026-12-01' });
   });
 });

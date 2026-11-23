@@ -26,6 +26,7 @@ Data lives in each browser's IndexedDB, so the live site, localhost and your pho
 ## Goals and the roadmap
 
 See [`docs/spec-goals-roadmap.md`](docs/spec-goals-roadmap.md) (spec addendum A1).
+The app-wide redesign is in [`docs/spec-app-redesign.md`](docs/spec-app-redesign.md) (spec addendum A4).
 
 - **Goals are end goals with a deadline**, like *Get a new job*, *Get in better shape* or *Be better at cooking*. Create one with **+** on the Roadmap. Goals no longer have a daily/weekly/monthly/yearly cadence.
 - **Link quests to a goal** with the quest's **Goal** field, or **+ Quest** on the goal page.

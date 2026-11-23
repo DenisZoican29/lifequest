@@ -1,10 +1,34 @@
 import { differenceInCalendarMonths, startOfWeek } from 'date-fns';
 
 import { addPeriod, daysBetween, fromLocalDate, toLocalDate } from './dates';
-import type { LocalDate, RecurrenceRule } from './types';
+import type { LocalDate, RecurrenceRule, TaskDefinition } from './types';
 
 export const isQuota = (rule: RecurrenceRule | undefined): rule is RecurrenceRule & { timesPerPeriod: number } =>
   !!rule && typeof rule.timesPerPeriod === 'number' && rule.timesPerPeriod >= 1;
+
+/** Every day, or N times per day: available each local day, with no due date. */
+export const isDailyRule = (rule: RecurrenceRule | undefined): boolean => !!rule && rule.frequency === 'day' && rule.interval === 1;
+
+/**
+ * Quests without a due date (addendum A4 §4): daily quests (including "N times per day"), and
+ * one-off or repeating quests saved with "No due date". They are never overdue, a missed day or
+ * period leaves no backlog, and they trigger no due-date reminder or deadline warning.
+ * A repeating quest without a due date runs for as long as you keep it: any time in each period.
+ */
+/**
+ * Whether a deadline warning can apply: every quest with a due date, plus repeating quests without
+ * one (counted back from the end of each period). Not for undated one-offs or daily quests.
+ */
+export function canWarn(task: Pick<TaskDefinition, 'recurrence' | 'window' | 'noDueDate'>): boolean {
+  if (task.window) return true;
+  if (isDailyRule(task.recurrence)) return false;
+  return !!task.recurrence || !task.noDueDate;
+}
+
+export function isUndated(task: Pick<TaskDefinition, 'recurrence' | 'window' | 'noDueDate'>): boolean {
+  if (task.window) return false;
+  return !!task.noDueDate || isDailyRule(task.recurrence);
+}
 
 export interface Period {
   /** First day, inclusive. */
